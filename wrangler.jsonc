@@ -1,0 +1,32 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "controlofproduction",
+  "main": "worker/index.ts",
+  "compatibility_date": "2026-05-15",
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
+  "workers_dev": true,
+  "preview_urls": false,
+  "keep_vars": true,
+  // Senha obrigatória por padrão: sem PORTAL_PASSWORD o site fica bloqueado,
+  // nunca aberto como administrador para qualquer pessoa.
+  "vars": {
+    "REQUIRE_PASSWORD": "true"
+  },
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": true
+  },
+  // Sem database_id: o deploy liga o banco "controle-producao-db" da conta pelo
+  // nome (ou cria esse banco se ele ainda não existir). Assim o mesmo arquivo
+  // funciona na conta nova sem copiar IDs.
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "controle-producao-db"
+    }
+  ]
+}
