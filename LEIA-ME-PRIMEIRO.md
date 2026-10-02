@@ -3,6 +3,7 @@
 - O portal **não lê mais a aba BAIXA CC** do Google Sheets. A aba continua na planilha, do jeito que está; o portal só não depende dela.
 - Saíram o botão "PDFs da planilha (BAIXA CC)", a rota que lia a aba e o arquivo `BAIXA_CC_modelo.xlsx`.
 - Os Scrap Forms e os PDFs (gerado e assinados) ficam guardados no próprio portal, como na MB51-62.
+- Novo quadro **Reposição e baixa no SAP** em cada formulário emitido: **PR**, **Data da PR**, **PO**, centro de custo e documento SAP da baixa. Ficam só no portal (não mudam o PDF assinado), aparecem na lista e entram na busca.
 
 ---
 

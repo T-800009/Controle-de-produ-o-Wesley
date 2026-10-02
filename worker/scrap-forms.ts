@@ -1,7 +1,7 @@
 import type {PortalDatabase} from './database';
 import type {PortalRole} from './auth';
 import {initial,ensureSchema} from './storage';
-import {MAX_PDF_BYTES,sanitizeFormData,sanitizeSignatures,statusFromSignatures,type ScrapFileMeta,type ScrapForm,type ScrapFormData,type ScrapSignature,type ScrapStatus} from '../lib/scrap-form';
+import {MAX_PDF_BYTES,isIsoDate,sanitizeFormData,sanitizeSignatures,statusFromSignatures,type ScrapFileMeta,type ScrapForm,type ScrapFormData,type ScrapSignature,type ScrapStatus} from '../lib/scrap-form';
 
 /**
  * Scrap Form: formulários, versões do PDF (gerado e devolvido com assinaturas)
@@ -100,12 +100,15 @@ export async function reopenScrapForm(db:PortalDatabase,id:unknown,revision:unkn
  changed(await db.prepare("UPDATE scrap_forms SET status='draft',signatures='[]',signed_at=NULL,sent_at=NULL,revision=revision+1,updated_at=? WHERE id=? AND revision=?").bind(new Date().toISOString(),form.id,form.revision).run());
  return (await getScrapForm(db,form.id))!;
 }
-/** Centro de custo e documento SAP da baixa: não vão no PDF, podem mudar a qualquer momento. */
-export async function updateScrapPosting(db:PortalDatabase,id:unknown,revision:unknown,input:{costCenter?:unknown;sapDocument?:unknown}){
+/** Reposição (PR, data da PR, PO), centro de custo e documento SAP da baixa:
+ * não vão no PDF e podem ser anotados depois que o formulário é emitido. */
+export async function updateScrapPosting(db:PortalDatabase,id:unknown,revision:unknown,input:{costCenter?:unknown;sapDocument?:unknown;pr?:unknown;prDate?:unknown;po?:unknown}){
  await scrapSchema(db);
  const form=await current(db,id,revision);
- if(form.status!=='signed')throw new ScrapError('A baixa no SAP é registrada depois que todos assinam.',409);
- const data=valid(()=>sanitizeFormData({...form.data,costCenter:input.costCenter??form.data.costCenter,sapDocument:input.sapDocument??form.data.sapDocument}));
+ if(form.status==='draft')throw new ScrapError('Gere o PDF do formulário antes de anotar PR, PO e baixa.',409);
+ if(input.prDate!==undefined&&input.prDate!==''&&!isIsoDate(input.prDate))throw new ScrapError('Data da PR inválida.');
+ const pick=(key:'costCenter'|'sapDocument'|'pr'|'prDate'|'po')=>input[key]??form.data[key];
+ const data=valid(()=>sanitizeFormData({...form.data,costCenter:pick('costCenter'),sapDocument:pick('sapDocument'),pr:pick('pr'),prDate:pick('prDate'),po:pick('po')}));
  changed(await db.prepare('UPDATE scrap_forms SET data=?,revision=revision+1,updated_at=? WHERE id=? AND revision=?').bind(JSON.stringify(data),new Date().toISOString(),form.id,form.revision).run());
  return (await getScrapForm(db,form.id))!;
 }

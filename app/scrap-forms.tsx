@@ -227,7 +227,7 @@ function ScrapFormList() {
       (form) =>
         (status === "all" || form.status === status || (status === "finance" && form.status === "signing" && statusText(form) === "Falta Financeiro")) &&
         (month === "all" || form.data.formDate.startsWith(month)) &&
-        [form.number, form.data.sapDocument, form.data.costCenter, ...form.data.items.flatMap((item) => [item.material, item.name, item.op, item.vin, item.defect])]
+        [form.number, form.data.sapDocument, form.data.costCenter, form.data.pr, form.data.po, ...form.data.items.flatMap((item) => [item.material, item.name, item.op, item.vin, item.defect])]
           .join(" ")
           .toLowerCase()
           .includes(text),
@@ -409,6 +409,7 @@ function ScrapFormList() {
                     <span className="scrap-row-status">
                       <i className={`scrap-status ${form.status}`}>{statusText(form)}</i>
                       {form.status === "signed" && <small>{form.sentAt ? `Enviado ${brDate(form.sentAt.slice(0, 10))}` : "Ainda não enviado"}</small>}
+                      {(form.data.pr || form.data.po) && <small>{[form.data.pr && `PR ${form.data.pr}`, form.data.po && `PO ${form.data.po}`].filter(Boolean).join(" · ")}</small>}
                       {form.data.sapDocument && <small>Doc. SAP {form.data.sapDocument}</small>}
                     </span>
                   </button>
@@ -473,7 +474,7 @@ function ScrapFormDialog({
     [showProblems, setShowProblems] = useState(false),
     [review, setReview] = useState<Review | null>(null),
     [preview, setPreview] = useState<string | null>(null),
-    [posting, setPosting] = useState({ costCenter: form?.data.costCenter || "", sapDocument: form?.data.sapDocument || "" });
+    [posting, setPosting] = useState(() => postingOf(form?.data));
   const fileInput = useRef<HTMLInputElement>(null);
   const editable = canEdit && (!form || form.status === "draft");
   const problems = useMemo(() => pdfProblems(data), [data]);
@@ -486,7 +487,7 @@ function ScrapFormDialog({
     if (form && !dirty) {
       setData(form.data);
       setBaseRevision(form.revision);
-      setPosting({ costCenter: form.data.costCenter, sapDocument: form.data.sapDocument });
+      setPosting(postingOf(form.data));
     }
   }, [form?.revision]);
   useEffect(() => () => void (preview && URL.revokeObjectURL?.(preview)), [preview]);
@@ -680,7 +681,7 @@ function ScrapFormDialog({
     await run("posting", async () => {
       const next = (await api({ action: "posting", id: form.id, revision: form.revision, ...posting })).form;
       onSaved(next);
-      setMessage({ kind: "ok", text: "Dados da baixa no SAP salvos." });
+      setMessage({ kind: "ok", text: "PR, PO e baixa no SAP salvos." });
     });
   }
 
@@ -861,28 +862,40 @@ function ScrapFormDialog({
           </fieldset>
         </section>
 
-        {form && form.status === "signed" && (
-          <section className="scrap-section" aria-label="Baixa no SAP">
+        {form && form.status !== "draft" && (
+          <section className="scrap-section" aria-label="Reposição e baixa no SAP">
             <div className="scrap-section-head">
-              <h4>Baixa no SAP</h4>
-              <span>Opcional: fica só no portal, não altera o PDF assinado</span>
+              <h4>Reposição e baixa no SAP</h4>
+              <span>Fica só no portal, não altera o PDF assinado</span>
             </div>
-            <div className="scrap-approvers scrap-posting">
+            <fieldset className="scrap-approvers scrap-posting scrap-fieldset" disabled={!canEdit || !!busy}>
+              <label>
+                PR
+                <input value={posting.pr} maxLength={30} inputMode="numeric" placeholder="6000014878" onChange={(e) => setPosting({ ...posting, pr: e.target.value })} />
+              </label>
+              <label>
+                Data da PR
+                <input type="date" value={posting.prDate} onChange={(e) => setPosting({ ...posting, prDate: e.target.value })} />
+              </label>
+              <label>
+                PO
+                <input value={posting.po} maxLength={30} inputMode="numeric" placeholder="9900029259" onChange={(e) => setPosting({ ...posting, po: e.target.value })} />
+              </label>
               <label>
                 Centro de custo
-                <input value={posting.costCenter} maxLength={40} disabled={!canEdit} onChange={(e) => setPosting({ ...posting, costCenter: e.target.value })} />
+                <input value={posting.costCenter} maxLength={40} onChange={(e) => setPosting({ ...posting, costCenter: e.target.value })} />
               </label>
               <label>
                 Documento SAP da baixa
-                <input value={posting.sapDocument} maxLength={40} disabled={!canEdit} onChange={(e) => setPosting({ ...posting, sapDocument: e.target.value })} />
+                <input value={posting.sapDocument} maxLength={40} onChange={(e) => setPosting({ ...posting, sapDocument: e.target.value })} />
               </label>
               {canEdit && (
-                <button disabled={!!busy || (posting.costCenter === form.data.costCenter && posting.sapDocument === form.data.sapDocument)} onClick={savePosting}>
+                <button disabled={JSON.stringify(posting) === JSON.stringify(postingOf(form.data))} onClick={savePosting}>
                   <Save size={16} />
-                  Salvar baixa
+                  Salvar
                 </button>
               )}
-            </div>
+            </fieldset>
           </section>
         )}
 
@@ -947,6 +960,13 @@ function ScrapFormDialog({
   );
 }
 
+const postingOf = (data?: ScrapFormData) => ({
+  pr: data?.pr || "",
+  prDate: data?.prDate || "",
+  po: data?.po || "",
+  costCenter: data?.costCenter || "",
+  sapDocument: data?.sapDocument || "",
+});
 function readApprovers() {
   try {
     return defaultApprovers(JSON.parse(store.get(APPROVERS_KEY) || "{}"));

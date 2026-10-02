@@ -83,7 +83,7 @@ export default {
       case 'update':return json({form:await updateScrapDraft(env.DB,body.id,revision,body.data)});
       case 'upload':return json({form:await uploadScrapPdf(env.DB,body,role)});
       case 'reopen':return json({form:await reopenScrapForm(env.DB,body.id,revision,role)});
-      case 'posting':return json({form:await updateScrapPosting(env.DB,body.id,revision,{costCenter:body.costCenter,sapDocument:body.sapDocument})});
+      case 'posting':return json({form:await updateScrapPosting(env.DB,body.id,revision,{costCenter:body.costCenter,sapDocument:body.sapDocument,pr:body.pr,prDate:body.prDate,po:body.po})});
       case 'sent':return json({form:await markScrapSent(env.DB,body.id)});
       case 'delete':return json(await deleteScrapForm(env.DB,body.id,revision,role));
       default:return json({error:'Ação inválida.'},400);

@@ -63,6 +63,10 @@ export type ScrapFormData = {
   approvers: Record<SlotId, string>;
   costCenter: string;
   sapDocument: string;
+  /** Reposição da peça: requisição (PR), data da PR e pedido (PO). Não vão no PDF. */
+  pr: string;
+  prDate: string;
+  po: string;
   notes: string;
 };
 /** valid: conferida (conteúdo e criptografia). invalid: não confere. unchecked: não deu para conferir. */
@@ -139,7 +143,7 @@ export function defaultApprovers(saved?: Partial<Record<SlotId, string>> | null)
 }
 export function emptyForm(approvers?: Partial<Record<SlotId, string>> | null): ScrapFormData {
   const date = todayIso();
-  return { formDate: date, items: [emptyItem(undefined, date)], approvers: defaultApprovers(approvers), costCenter: "", sapDocument: "", notes: "" };
+  return { formDate: date, items: [emptyItem(undefined, date)], approvers: defaultApprovers(approvers), costCenter: "", sapDocument: "", pr: "", prDate: "", po: "", notes: "" };
 }
 
 /** Código SAP como texto: tira espaços e põe em maiúsculas. Nunca inventa o sufixo. */
@@ -205,6 +209,9 @@ export function sanitizeFormData(input: unknown): ScrapFormData {
     approvers,
     costCenter: text(raw.costCenter, 40),
     sapDocument: text(raw.sapDocument, 40),
+    pr: text(raw.pr, 30),
+    prDate: isIsoDate(raw.prDate) ? raw.prDate : "",
+    po: text(raw.po, 30),
     notes: text(raw.notes, 500),
   };
 }

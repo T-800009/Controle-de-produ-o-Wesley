@@ -650,7 +650,8 @@ html { scroll-padding-top: 92px; }
 .scrap-items-table td:nth-child(4){min-width:180px}
 .scrap-items-table td:nth-child(5){min-width:220px}
 .scrap-approvers{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px;align-items:end}
-.scrap-posting{grid-template-columns:repeat(2,minmax(0,1fr)) auto}
+.scrap-posting{grid-template-columns:repeat(5,minmax(0,1fr)) auto}
+@media (max-width:1000px){.scrap-posting{grid-template-columns:repeat(3,minmax(0,1fr))}}
 .scrap-history{font-size:12px;color:var(--ui-muted)}
 .scrap-history summary{cursor:pointer;padding:6px 0}
 .scrap-history ul{margin:6px 0 0;padding:0;list-style:none;display:flex;flex-direction:column;gap:6px}

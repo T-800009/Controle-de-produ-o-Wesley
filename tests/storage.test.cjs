@@ -266,8 +266,11 @@ console.log('Observações Ana: compartilhamento, isolamento OP/material, perfil
  assert.equal((await db.prepare('SELECT COUNT(*) AS n FROM scrap_files WHERE form_id=? AND version=3').bind(form.id).first()).n,0,'Revisão antiga não grava partes');
  form=(await (await upload({kind:'signed',pdf:b64(signedPdf),signatures:all})).json()).form;
  assert.equal(form.status,'signed');assert.ok(form.signedAt);assert.equal(form.files.length,3);
- form=(await (await scrap({action:'posting',id:form.id,revision:form.revision,sapDocument:'4900012345',costCenter:'BR02-PROD'})).json()).form;
+ assert.equal((await scrap({action:'posting',id:second.id,revision:second.revision,pr:'6000014878'})).status,409,'Rascunho não recebe PR/PO');
+ assert.equal((await scrap({action:'posting',id:form.id,revision:form.revision,prDate:'12/05/2026'})).status,400,'Data da PR inválida');
+ form=(await (await scrap({action:'posting',id:form.id,revision:form.revision,sapDocument:'4900012345',costCenter:'BR02-PROD',pr:'6000014878',prDate:'2026-05-12',po:'9900029259'})).json()).form;
  assert.equal(form.data.sapDocument,'4900012345');assert.equal(form.status,'signed');
+ assert.deepEqual([form.data.pr,form.data.prDate,form.data.po],['6000014878','2026-05-12','9900029259']);
  form=(await (await scrap({action:'sent',id:form.id})).json()).form;assert.ok(form.sentAt);
  const list=await (await call('/api/scrap-forms',{headers:viewerHeaders},viewerEnv)).json();
  assert.deepEqual(list.forms.map(entry=>entry.number),[second.number,first.number]);assert.equal(list.forms[1].files.length,3);assert.equal(list.forms[1].sentAt,form.sentAt);

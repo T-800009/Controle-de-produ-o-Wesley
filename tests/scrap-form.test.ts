@@ -80,6 +80,9 @@ test("a API limpa o formulário e recusa estrutura inválida", () => {
   assert.equal(clean.items[0].classification, "B");
   assert.equal(clean.items[0].unitPrice, 1054.87);
   assert.equal(clean.items[0].defect, "linha com controle");
+  const purchase = sanitizeFormData({ ...complete(), pr: " 6000014878 ", prDate: "2026-05-12", po: "9900029259" });
+  assert.deepEqual([purchase.pr, purchase.prDate, purchase.po], ["6000014878", "2026-05-12", "9900029259"]);
+  assert.equal(sanitizeFormData({ ...complete(), prDate: "12/05/2026" }).prDate, "", "data fora do padrão é descartada");
   assert.throws(() => sanitizeFormData({ items: "x" }), /Formulário inválido/);
   assert.throws(() => sanitizeFormData({ ...complete(), items: Array.from({ length: 19 }, () => emptyItem()) }), /no máximo 18/);
   assert.throws(() => sanitizeFormData({ ...complete(), items: [{ ...complete().items[0], quantity: -1 }] }), /inválid/);
