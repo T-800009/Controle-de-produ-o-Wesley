@@ -1,11 +1,14 @@
 import type {PortalDatabase} from './database';
 import type {PortalRole} from './auth';
 import {initial,ensureSchema} from './storage';
-import {MAX_PDF_BYTES,isIsoDate,sanitizeFormData,sanitizeSignatures,statusFromSignatures,type ScrapFileMeta,type ScrapForm,type ScrapFormData,type ScrapSignature,type ScrapStatus} from '../lib/scrap-form';
+import {MAX_PDF_BYTES,isIsoDate,sanitizeFormData,sanitizeSignatures,statusFromSignatures,type DocKind,type ScrapFileMeta,type ScrapForm,type ScrapSignature,type ScrapStatus} from '../lib/scrap-form';
+import {sanitizeCcData,type CcForm} from '../lib/cc-form';
 
 /**
- * Scrap Form: formulários, versões do PDF (gerado e devolvido com assinaturas)
- * e consulta de descrição/classe nas BOMs cadastradas.
+ * Scrap Form e FO.FI.C.007 (baixa em centro de custo): formulários, versões do
+ * PDF (gerado e devolvido com assinaturas) e consulta de descrição/classe nas
+ * BOMs cadastradas. Cada tipo tem sua tabela e sua numeração (SCRAP-… / CC-…);
+ * os PDFs dos dois ficam em scrap_files.
  * O PDF é guardado em partes de texto base64 (limite de linha do D1/Turso).
  * A conferência criptográfica das assinaturas é feita no navegador; aqui só se
  * guarda o resultado validado e o status calculado pela mesma regra.
@@ -17,11 +20,20 @@ export async function scrapSchema(db:PortalDatabase){
   db.prepare("CREATE TABLE IF NOT EXISTS scrap_forms(id TEXT PRIMARY KEY NOT NULL,number TEXT NOT NULL UNIQUE,year INTEGER NOT NULL,seq INTEGER NOT NULL,status TEXT NOT NULL CHECK(status IN ('draft','signing','signed')),data TEXT NOT NULL,signatures TEXT NOT NULL DEFAULT '[]',file_version INTEGER NOT NULL DEFAULT 0,revision INTEGER NOT NULL DEFAULT 1,created_by TEXT NOT NULL,created_at TEXT NOT NULL,updated_at TEXT NOT NULL,signed_at TEXT,sent_at TEXT,UNIQUE(year,seq))"),
   // Contador por ano: um número apagado nunca volta a ser usado.
   db.prepare('CREATE TABLE IF NOT EXISTS scrap_counters(year INTEGER PRIMARY KEY NOT NULL,seq INTEGER NOT NULL)'),
+  db.prepare("CREATE TABLE IF NOT EXISTS cc_forms(id TEXT PRIMARY KEY NOT NULL,number TEXT NOT NULL UNIQUE,year INTEGER NOT NULL,seq INTEGER NOT NULL,status TEXT NOT NULL CHECK(status IN ('draft','signing','signed')),data TEXT NOT NULL,signatures TEXT NOT NULL DEFAULT '[]',file_version INTEGER NOT NULL DEFAULT 0,revision INTEGER NOT NULL DEFAULT 1,created_by TEXT NOT NULL,created_at TEXT NOT NULL,updated_at TEXT NOT NULL,signed_at TEXT,sent_at TEXT,UNIQUE(year,seq))"),
+  db.prepare('CREATE TABLE IF NOT EXISTS cc_counters(year INTEGER PRIMARY KEY NOT NULL,seq INTEGER NOT NULL)'),
   db.prepare("CREATE TABLE IF NOT EXISTS scrap_files(form_id TEXT NOT NULL,version INTEGER NOT NULL,part INTEGER NOT NULL,kind TEXT NOT NULL CHECK(kind IN ('generated','signed')),name TEXT NOT NULL,size INTEGER NOT NULL,sha256 TEXT NOT NULL,data TEXT NOT NULL,created_at TEXT NOT NULL,created_by TEXT NOT NULL,PRIMARY KEY(form_id,version,part))")
  ]).then(()=>{}).catch(error=>{ready.delete(db);throw error;});ready.set(db,promise);}
  await promise;
 }
 
+/** Tabelas e regra de cada tipo de documento (nomes fixos, nunca vindos do usuário). */
+const KINDS={
+ scrap:{forms:'scrap_forms',counters:'scrap_counters',prefix:'SCRAP',sanitize:sanitizeFormData},
+ cc:{forms:'cc_forms',counters:'cc_counters',prefix:'CC',sanitize:sanitizeCcData}
+} as const;
+export const docKind=(value:unknown):DocKind=>value==='cc'?'cc':'scrap';
+type DocForm=ScrapForm|CcForm;
 export class ScrapError extends Error{constructor(message:string,readonly status=400){super(message);}}
 /** Erros de validação da regra viram 400 com a mensagem para o usuário. */
 function valid<T>(read:()=>T):T{try{return read();}catch(error){throw new ScrapError((error as Error).message||'Dados inválidos.');}}
@@ -31,34 +43,37 @@ type Row={id:string;number:string;status:ScrapStatus;data:string;signatures:stri
 type FileRow={form_id:string;version:number;kind:'generated'|'signed';name:string;size:number;sha256:string;created_at:string;created_by:string};
 const validId=(value:unknown):value is string=>typeof value==='string'&&/^[a-f0-9-]{36}$/i.test(value);
 const validRevision=(value:unknown):value is number=>Number.isSafeInteger(value)&&Number(value)>0;
-function toForm(row:Row,files:ScrapFileMeta[]):ScrapForm{
- let data:ScrapFormData,signatures:ScrapSignature[]=[];
- try{data=sanitizeFormData(JSON.parse(row.data));}catch{data=sanitizeFormData({items:[]});}
+function toForm(row:Row,files:ScrapFileMeta[],kind:DocKind):DocForm{
+ const sanitize=KINDS[kind].sanitize as (input:unknown)=>any;
+ let data:any,signatures:ScrapSignature[]=[];
+ try{data=sanitize(JSON.parse(row.data));}catch{data=sanitize({items:[]});}
  try{signatures=sanitizeSignatures(JSON.parse(row.signatures));}catch{}
  return {id:row.id,number:row.number,status:row.status,data,signatures,fileVersion:Number(row.file_version)||0,files,revision:Number(row.revision)||1,createdAt:row.created_at,updatedAt:row.updated_at,createdBy:row.created_by,signedAt:row.signed_at,sentAt:row.sent_at};
 }
 const fileMeta=(row:FileRow):ScrapFileMeta=>({version:Number(row.version),kind:row.kind,name:row.name,size:Number(row.size),sha256:row.sha256,createdAt:row.created_at,createdBy:row.created_by});
 
-export async function listScrapForms(db:PortalDatabase){
+const COLUMNS='id,number,status,data,signatures,file_version,revision,created_by,created_at,updated_at,signed_at,sent_at';
+export async function listScrapForms(db:PortalDatabase,kind:DocKind='scrap'){
  await scrapSchema(db);
+ const table=KINDS[kind].forms;
  const [forms,files]=await db.batch([
-  db.prepare('SELECT id,number,status,data,signatures,file_version,revision,created_by,created_at,updated_at,signed_at,sent_at FROM scrap_forms ORDER BY year DESC,seq DESC'),
-  db.prepare('SELECT form_id,version,kind,name,size,sha256,created_at,created_by FROM scrap_files WHERE part=0 ORDER BY form_id,version')
+  db.prepare(`SELECT ${COLUMNS} FROM ${table} ORDER BY year DESC,seq DESC`),
+  db.prepare(`SELECT f.form_id,f.version,f.kind,f.name,f.size,f.sha256,f.created_at,f.created_by FROM scrap_files f JOIN ${table} t ON t.id=f.form_id WHERE f.part=0 ORDER BY f.form_id,f.version`)
  ]);
  const byForm=new Map<string,ScrapFileMeta[]>();
  for(const row of files.results as FileRow[])byForm.set(row.form_id,[...(byForm.get(row.form_id)||[]),fileMeta(row)]);
- return (forms.results as Row[]).map(row=>toForm(row,byForm.get(row.id)||[]));
+ return (forms.results as Row[]).map(row=>toForm(row,byForm.get(row.id)||[],kind));
 }
-export async function getScrapForm(db:PortalDatabase,id:string){
+export async function getScrapForm(db:PortalDatabase,id:string,kind:DocKind='scrap'){
  await scrapSchema(db);
- const row=await db.prepare('SELECT id,number,status,data,signatures,file_version,revision,created_by,created_at,updated_at,signed_at,sent_at FROM scrap_forms WHERE id=?').bind(id).first<Row>();
+ const row=await db.prepare(`SELECT ${COLUMNS} FROM ${KINDS[kind].forms} WHERE id=?`).bind(id).first<Row>();
  if(!row)return null;
  const files=await db.prepare('SELECT form_id,version,kind,name,size,sha256,created_at,created_by FROM scrap_files WHERE form_id=? AND part=0 ORDER BY version').bind(id).all<FileRow>();
- return toForm(row,files.results.map(fileMeta));
+ return toForm(row,files.results.map(fileMeta),kind);
 }
-async function current(db:PortalDatabase,id:unknown,revision:unknown){
+async function current(db:PortalDatabase,id:unknown,revision:unknown,kind:DocKind){
  if(!validId(id))throw new ScrapError('Formulário inválido.');
- const form=await getScrapForm(db,id);
+ const form=await getScrapForm(db,id,kind);
  if(!form)throw new ScrapError('Formulário não encontrado. Ele pode ter sido apagado; atualize a lista.',404);
  if(revision!==undefined&&form.revision!==revision)throw new ScrapError('Outra pessoa alterou este formulário. Atualize a lista antes de continuar.',409);
  return form;
@@ -72,61 +87,69 @@ export function brazilYear(now:Date){
  const year=Number(new Intl.DateTimeFormat('en-US',{timeZone:'America/Sao_Paulo',year:'numeric'}).format(now));
  return Number.isInteger(year)?year:now.getUTCFullYear();
 }
-export async function createScrapForm(db:PortalDatabase,input:unknown,role:PortalRole,now=new Date()){
+export async function createScrapForm(db:PortalDatabase,input:unknown,role:PortalRole,now=new Date(),kind:DocKind='scrap'){
  await scrapSchema(db);
- const data=valid(()=>sanitizeFormData(input));
+ const {forms,counters,prefix,sanitize}=KINDS[kind];
+ const data=valid(()=>(sanitize as (input:unknown)=>unknown)(input));
  const year=brazilYear(now),stamp=now.toISOString(),id=crypto.randomUUID();
  // Numeração sequencial por ano numa transação: contador (iniciado pelo maior número já usado) + formulário.
  await db.batch([
-  db.prepare('INSERT INTO scrap_counters(year,seq) VALUES(?,(SELECT COALESCE(MAX(seq),0)+1 FROM scrap_forms WHERE year=?)) ON CONFLICT(year) DO UPDATE SET seq=scrap_counters.seq+1').bind(year,year),
-  db.prepare("INSERT INTO scrap_forms(id,number,year,seq,status,data,signatures,file_version,revision,created_by,created_at,updated_at) SELECT ?,'SCRAP-'||?||'-'||CASE WHEN seq<10000 THEN substr('0000'||seq,-4) ELSE seq END,?,seq,'draft',?,'[]',0,1,?,?,? FROM scrap_counters WHERE year=?").bind(id,String(year),year,JSON.stringify(data),role,stamp,stamp,year)
+  db.prepare(`INSERT INTO ${counters}(year,seq) VALUES(?,(SELECT COALESCE(MAX(seq),0)+1 FROM ${forms} WHERE year=?)) ON CONFLICT(year) DO UPDATE SET seq=${counters}.seq+1`).bind(year,year),
+  db.prepare(`INSERT INTO ${forms}(id,number,year,seq,status,data,signatures,file_version,revision,created_by,created_at,updated_at) SELECT ?,'${prefix}-'||?||'-'||CASE WHEN seq<10000 THEN substr('0000'||seq,-4) ELSE seq END,?,seq,'draft',?,'[]',0,1,?,?,? FROM ${counters} WHERE year=?`).bind(id,String(year),year,JSON.stringify(data),role,stamp,stamp,year)
  ]);
- return (await getScrapForm(db,id))!;
+ return (await getScrapForm(db,id,kind))!;
 }
-export async function updateScrapDraft(db:PortalDatabase,id:unknown,revision:unknown,input:unknown){
+export async function updateScrapDraft(db:PortalDatabase,id:unknown,revision:unknown,input:unknown,kind:DocKind='scrap'){
  await scrapSchema(db);
- const form=await current(db,id,revision);
+ const form=await current(db,id,revision,kind);
  if(form.status!=='draft')throw new ScrapError('Este formulário já foi emitido para assinatura. Use Reabrir para corrigir.',409);
- const data=valid(()=>sanitizeFormData(input));
- changed(await db.prepare("UPDATE scrap_forms SET data=?,revision=revision+1,updated_at=? WHERE id=? AND revision=? AND status='draft'").bind(JSON.stringify(data),new Date().toISOString(),form.id,form.revision).run());
- return (await getScrapForm(db,form.id))!;
+ const data=valid(()=>(KINDS[kind].sanitize as (input:unknown)=>unknown)(input));
+ changed(await db.prepare(`UPDATE ${KINDS[kind].forms} SET data=?,revision=revision+1,updated_at=? WHERE id=? AND revision=? AND status='draft'`).bind(JSON.stringify(data),new Date().toISOString(),form.id,form.revision).run());
+ return (await getScrapForm(db,form.id,kind))!;
 }
 /** Volta para rascunho: as assinaturas coletadas deixam de valer; os PDFs antigos ficam no histórico. */
-export async function reopenScrapForm(db:PortalDatabase,id:unknown,revision:unknown,role:PortalRole='admin'){
+export async function reopenScrapForm(db:PortalDatabase,id:unknown,revision:unknown,role:PortalRole='admin',kind:DocKind='scrap'){
  await scrapSchema(db);
- const form=await current(db,id,revision);
+ const form=await current(db,id,revision,kind);
  if(form.status==='draft')return form;
  if(form.status==='signed'&&role!=='admin')throw new ScrapError('Formulário já assinado por todos: somente o administrador pode reabrir.',403);
- changed(await db.prepare("UPDATE scrap_forms SET status='draft',signatures='[]',signed_at=NULL,sent_at=NULL,revision=revision+1,updated_at=? WHERE id=? AND revision=?").bind(new Date().toISOString(),form.id,form.revision).run());
- return (await getScrapForm(db,form.id))!;
+ changed(await db.prepare(`UPDATE ${KINDS[kind].forms} SET status='draft',signatures='[]',signed_at=NULL,sent_at=NULL,revision=revision+1,updated_at=? WHERE id=? AND revision=?`).bind(new Date().toISOString(),form.id,form.revision).run());
+ return (await getScrapForm(db,form.id,kind))!;
 }
 /** Reposição (PR, data da PR, PO), centro de custo e documento SAP da baixa:
  * não vão no PDF e podem ser anotados depois que o formulário é emitido. */
-export async function updateScrapPosting(db:PortalDatabase,id:unknown,revision:unknown,input:{costCenter?:unknown;sapDocument?:unknown;pr?:unknown;prDate?:unknown;po?:unknown}){
+export async function updateScrapPosting(db:PortalDatabase,id:unknown,revision:unknown,input:{costCenter?:unknown;sapDocument?:unknown;pr?:unknown;prDate?:unknown;po?:unknown},kind:DocKind='scrap'){
  await scrapSchema(db);
- const form=await current(db,id,revision);
+ const form=await current(db,id,revision,kind);
  if(form.status==='draft')throw new ScrapError('Gere o PDF do formulário antes de anotar PR, PO e baixa.',409);
- if(input.prDate!==undefined&&input.prDate!==''&&!isIsoDate(input.prDate))throw new ScrapError('Data da PR inválida.');
- const pick=(key:'costCenter'|'sapDocument'|'pr'|'prDate'|'po')=>input[key]??form.data[key];
- const data=valid(()=>sanitizeFormData({...form.data,costCenter:pick('costCenter'),sapDocument:pick('sapDocument'),pr:pick('pr'),prDate:pick('prDate'),po:pick('po')}));
- changed(await db.prepare('UPDATE scrap_forms SET data=?,revision=revision+1,updated_at=? WHERE id=? AND revision=?').bind(JSON.stringify(data),new Date().toISOString(),form.id,form.revision).run());
- return (await getScrapForm(db,form.id))!;
+ let data:unknown;
+ if(kind==='cc'){
+  data=valid(()=>sanitizeCcData({...form.data,sapDocument:input.sapDocument??form.data.sapDocument}));
+ }else{
+  const scrap=form.data as ScrapForm['data'];
+  if(input.prDate!==undefined&&input.prDate!==''&&!isIsoDate(input.prDate))throw new ScrapError('Data da PR inválida.');
+  const pick=(key:'costCenter'|'sapDocument'|'pr'|'prDate'|'po')=>input[key]??scrap[key];
+  data=valid(()=>sanitizeFormData({...scrap,costCenter:pick('costCenter'),sapDocument:pick('sapDocument'),pr:pick('pr'),prDate:pick('prDate'),po:pick('po')}));
+ }
+ changed(await db.prepare(`UPDATE ${KINDS[kind].forms} SET data=?,revision=revision+1,updated_at=? WHERE id=? AND revision=?`).bind(JSON.stringify(data),new Date().toISOString(),form.id,form.revision).run());
+ return (await getScrapForm(db,form.id,kind))!;
 }
-export async function markScrapSent(db:PortalDatabase,id:unknown){
+export async function markScrapSent(db:PortalDatabase,id:unknown,kind:DocKind='scrap'){
  await scrapSchema(db);
- const form=await current(db,id,undefined);
+ const form=await current(db,id,undefined,kind);
  if(form.status!=='signed')throw new ScrapError('Só o PDF assinado por todos é marcado como enviado.',409);
  const now=new Date().toISOString();
- await db.prepare('UPDATE scrap_forms SET sent_at=? WHERE id=?').bind(now,form.id).run();
+ await db.prepare(`UPDATE ${KINDS[kind].forms} SET sent_at=? WHERE id=?`).bind(now,form.id).run();
  return {...form,sentAt:now};
 }
-export async function deleteScrapForm(db:PortalDatabase,id:unknown,revision:unknown,role:PortalRole){
+export async function deleteScrapForm(db:PortalDatabase,id:unknown,revision:unknown,role:PortalRole,kind:DocKind='scrap'){
  await scrapSchema(db);
- const form=await current(db,id,revision);
+ const form=await current(db,id,revision,kind);
+ const table=KINDS[kind].forms;
  if(role!=='admin'&&(form.status!=='draft'||form.files.length))throw new ScrapError('Somente o administrador pode apagar um formulário que já foi emitido.',403);
  const results=await db.batch([
-  db.prepare('DELETE FROM scrap_files WHERE form_id=? AND EXISTS(SELECT 1 FROM scrap_forms WHERE id=? AND revision=?)').bind(form.id,form.id,form.revision),
-  db.prepare('DELETE FROM scrap_forms WHERE id=? AND revision=?').bind(form.id,form.revision)
+  db.prepare(`DELETE FROM scrap_files WHERE form_id=? AND EXISTS(SELECT 1 FROM ${table} WHERE id=? AND revision=?)`).bind(form.id,form.id,form.revision),
+  db.prepare(`DELETE FROM ${table} WHERE id=? AND revision=?`).bind(form.id,form.revision)
  ]);
  changed(results[1]);
  return {deleted:form.id,number:form.number};
@@ -158,9 +181,10 @@ const safeName=(value:unknown,fallback:string)=>{const name=String(value??'').re
 
 /** Grava uma nova versão do PDF. "generated": emitido pelo portal (rascunho → assinatura).
  * "signed": devolvido com assinaturas; o status vem da mesma regra usada na tela. */
-export async function uploadScrapPdf(db:PortalDatabase,payload:{id?:unknown;revision?:unknown;kind?:unknown;name?:unknown;pdf?:unknown;signatures?:unknown},role:PortalRole){
+export async function uploadScrapPdf(db:PortalDatabase,payload:{id?:unknown;revision?:unknown;kind?:unknown;name?:unknown;pdf?:unknown;signatures?:unknown},role:PortalRole,docType:DocKind='scrap'){
  await scrapSchema(db);
- const form=await current(db,payload.id,payload.revision);
+ const form=await current(db,payload.id,payload.revision,docType);
+ const table=KINDS[docType].forms;
  const kind=payload.kind;
  if(kind!=='generated'&&kind!=='signed')throw new ScrapError('Tipo de arquivo inválido.');
  if(typeof payload.pdf!=='string')throw new ScrapError('Envie o PDF.');
@@ -185,20 +209,20 @@ export async function uploadScrapPdf(db:PortalDatabase,payload:{id?:unknown;revi
   // Conferência barata: cada assinatura conferida no navegador tem um /ByteRange no arquivo.
   const checked=signatures.filter(signature=>signature.check==='valid').length;
   if(countBytes(bytes,'/ByteRange')<checked)throw new ScrapError('O arquivo não tem as assinaturas informadas. Anexe de novo o PDF assinado.');
-  status=statusFromSignatures(form.data,signatures);
+  status=statusFromSignatures(form.data,signatures,docType);
  }
  const version=(form.files.reduce((max,file)=>Math.max(max,file.version),0))+1;
  const now=new Date().toISOString();
  const name=safeName(payload.name,`${form.number}-v${version}.pdf`);
- const guard='EXISTS(SELECT 1 FROM scrap_forms WHERE id=? AND revision=?)';
+ const guard=`EXISTS(SELECT 1 FROM ${table} WHERE id=? AND revision=?)`;
  const statements=[];
  for(let part=0;part*PART<clean.length;part++)
   statements.push(db.prepare(`INSERT INTO scrap_files(form_id,version,part,kind,name,size,sha256,data,created_at,created_by) SELECT ?,?,?,?,?,?,?,?,?,? WHERE ${guard}`).bind(form.id,version,part,kind,name,bytes.length,hash,clean.slice(part*PART,(part+1)*PART),now,role,form.id,form.revision));
  const signedAt=status==='signed'?(form.status==='signed'&&form.signedAt?form.signedAt:now):null;
- statements.push(db.prepare('UPDATE scrap_forms SET status=?,signatures=?,file_version=?,signed_at=?,revision=revision+1,updated_at=? WHERE id=? AND revision=?').bind(status,JSON.stringify(signatures),version,signedAt,now,form.id,form.revision));
+ statements.push(db.prepare(`UPDATE ${table} SET status=?,signatures=?,file_version=?,signed_at=?,revision=revision+1,updated_at=? WHERE id=? AND revision=?`).bind(status,JSON.stringify(signatures),version,signedAt,now,form.id,form.revision));
  const results=await db.batch(statements);
  changed(results.at(-1));
- return (await getScrapForm(db,form.id))!;
+ return (await getScrapForm(db,form.id,docType))!;
 }
 export async function readScrapFile(db:PortalDatabase,id:unknown,version:unknown){
  await scrapSchema(db);

@@ -6,7 +6,7 @@ import {anaNotesRoute} from './ana-notes';
 import {STOCK_MODULES,stockModule} from '../lib/stock-modules';
 import {serverFailure} from './server-errors';
 import {resolveDatabase,databaseProvider,type DatabaseEnv} from './database';
-import {ScrapError,listScrapForms,lookupMaterials,readScrapFile,createScrapForm,updateScrapDraft,uploadScrapPdf,reopenScrapForm,updateScrapPosting,markScrapSent,deleteScrapForm} from './scrap-forms';
+import {ScrapError,docKind,listScrapForms,lookupMaterials,readScrapFile,createScrapForm,updateScrapDraft,uploadScrapPdf,reopenScrapForm,updateScrapPosting,markScrapSent,deleteScrapForm} from './scrap-forms';
 interface Env extends Omit<PasswordEnv,'DB'>,DatabaseEnv {GOOGLE_SERVICE_ACCOUNT_JSON?:string;REQUIRE_PASSWORD?:string;ASSETS:Fetcher;}
 function json(value:unknown,status=200){return Response.json(value,{status,headers:{'Cache-Control':'no-store','X-Content-Type-Options':'nosniff'}});}
 async function bodyLimited(req:Request){
@@ -29,7 +29,7 @@ export default {
     if(!authenticatedRole)return path.startsWith('/api/')?json({error:configured(env)?'Sessão expirada. Recarregue a página e entre novamente.':'O responsável precisa configurar a senha do portal.'},configured(env)?401:503):loginPage('',configured(env)?200:503,!configured(env));
     role=authenticatedRole;
    }
-   if(path==='/api/version')return json({version:'MB51-63',scrapForms:true,scrapFormSignatureCheck:true,costCenterSheetRead:false,allOpsOk:true,stock7000Projects:true,bomDelete:true,bomImportWithoutOpColumns:true,bomEditOps:true,stock7000SingleMb51Read:true,databaseProvider:databaseProvider(bindings),tursoSupported:true,databaseErrorCodes:true,revisionOnlyPolling:true,mb51Trace:true,scrapDocumentReconciliation:true,backgroundSourceProcessing:true,stockSources:STOCK_MODULES.map(stock=>({id:stock.id,sheet:stock.sheet})),warehouseClassFilter:true,spacedNavigation:true,operationalStatusChart:true,warehouseConsolidated:true,warehouseSharedBalance:true,opCardsWithoutSapCounts:true,responsiveLayout:true,anaNotesSingleColumn:true,anaOrderCards:true,production7000First:true,warehouse2000Comparison:true,mb51OrderCoverage:true,automaticSource:true,coois:true,cooisOptional:true,anaCheck:true,anaVisualOverview:true,anaPortugueseDescriptions:true,anaSharedNotes:true,anaAnalystRole:true,anaCooisPendingFlag:true,anaNativeSap:true,anaCostReferences:true,anaCurrencyTotals:true,anaCoverageAudit:true,opStatusAndConsumptionViews:true,anaOptionalMm60:true,anaSources:['KOB1','ZPP009','MM60','COOIS'],physicalFinalization:false,manualOpStatus:true,stockSingleRead:true,stock2000:true,stockHeaderMapping:true,opClassChart:true,mainChartNavigation:true,fullWidthLayout:true,topTableScroll:true,sapOnlyPending:false,neutralTheme:true,excelFormula:false,formulaKeyFallback:true,footerBomUpload:true,multipleBoms:true,autoBomRevision:true,scrap:true,scrapDiagnostics:true,scrapConsumption:true,scrapNetting:true,overageNotShortage:true,sharedAdminChecks:true,viewerReadOnly:true,bulkManualChecks:true,instantSharedChecks:true,refreshIntervalMinutes:0,manualRefreshOnly:true,fixedBomItems:true,performanceOptimized:true});
+   if(path==='/api/version')return json({version:'MB51-64',scrapForms:true,costCenterForms:true,scrapFormSignatureCheck:true,costCenterSheetRead:false,allOpsOk:true,stock7000Projects:true,bomDelete:true,bomImportWithoutOpColumns:true,bomEditOps:true,stock7000SingleMb51Read:true,databaseProvider:databaseProvider(bindings),tursoSupported:true,databaseErrorCodes:true,revisionOnlyPolling:true,mb51Trace:true,scrapDocumentReconciliation:true,backgroundSourceProcessing:true,stockSources:STOCK_MODULES.map(stock=>({id:stock.id,sheet:stock.sheet})),warehouseClassFilter:true,spacedNavigation:true,operationalStatusChart:true,warehouseConsolidated:true,warehouseSharedBalance:true,opCardsWithoutSapCounts:true,responsiveLayout:true,anaNotesSingleColumn:true,anaOrderCards:true,production7000First:true,warehouse2000Comparison:true,mb51OrderCoverage:true,automaticSource:true,coois:true,cooisOptional:true,anaCheck:true,anaVisualOverview:true,anaPortugueseDescriptions:true,anaSharedNotes:true,anaAnalystRole:true,anaCooisPendingFlag:true,anaNativeSap:true,anaCostReferences:true,anaCurrencyTotals:true,anaCoverageAudit:true,opStatusAndConsumptionViews:true,anaOptionalMm60:true,anaSources:['KOB1','ZPP009','MM60','COOIS'],physicalFinalization:false,manualOpStatus:true,stockSingleRead:true,stock2000:true,stockHeaderMapping:true,opClassChart:true,mainChartNavigation:true,fullWidthLayout:true,topTableScroll:true,sapOnlyPending:false,neutralTheme:true,excelFormula:false,formulaKeyFallback:true,footerBomUpload:true,multipleBoms:true,autoBomRevision:true,scrap:true,scrapDiagnostics:true,scrapConsumption:true,scrapNetting:true,overageNotShortage:true,sharedAdminChecks:true,viewerReadOnly:true,bulkManualChecks:true,instantSharedChecks:true,refreshIntervalMinutes:0,manualRefreshOnly:true,fixedBomItems:true,performanceOptimized:true});
    if(path==='/api/session')return json({role,canMark:role==='admin',canWriteAna:role==='admin'||role==='analyst'});
    if(path==='/api/ana-notes')return await anaNotesRoute(req,env.DB,role);
    if(path==='/api/data'){
@@ -68,7 +68,7 @@ export default {
       }
       const lookup=url.searchParams.get('lookup');
       if(lookup!==null)return json(await lookupMaterials(env.DB,lookup.slice(0,1000)));
-      return json({forms:await listScrapForms(env.DB),canEdit,canDelete:role==='admin',role});
+      return json({forms:await listScrapForms(env.DB,docKind(url.searchParams.get('doc'))),canEdit,canDelete:role==='admin',role});
      }
      if(req.method!=='POST')return json({error:'Método não permitido.'},405);
      if(!canEdit)return json({error:'O perfil Consulta pode ver e baixar os formulários. Use o acesso de Analista ou Administrador para preencher e anexar PDFs.'},403);
@@ -77,15 +77,15 @@ export default {
      let body:any;
      try{body=await bodyLimited(req);}catch(e){return json({error:e instanceof SyntaxError?'Formato inválido.':(e as Error).message},400);}
      if(!body||typeof body!=='object')return json({error:'Formato inválido.'},400);
-     const revision=body.revision;
+     const revision=body.revision,kind=docKind(body.doc);
      switch(body.action){
-      case 'create':return json({form:await createScrapForm(env.DB,body.data,role)});
-      case 'update':return json({form:await updateScrapDraft(env.DB,body.id,revision,body.data)});
-      case 'upload':return json({form:await uploadScrapPdf(env.DB,body,role)});
-      case 'reopen':return json({form:await reopenScrapForm(env.DB,body.id,revision,role)});
-      case 'posting':return json({form:await updateScrapPosting(env.DB,body.id,revision,{costCenter:body.costCenter,sapDocument:body.sapDocument,pr:body.pr,prDate:body.prDate,po:body.po})});
-      case 'sent':return json({form:await markScrapSent(env.DB,body.id)});
-      case 'delete':return json(await deleteScrapForm(env.DB,body.id,revision,role));
+      case 'create':return json({form:await createScrapForm(env.DB,body.data,role,new Date(),kind)});
+      case 'update':return json({form:await updateScrapDraft(env.DB,body.id,revision,body.data,kind)});
+      case 'upload':return json({form:await uploadScrapPdf(env.DB,body,role,kind)});
+      case 'reopen':return json({form:await reopenScrapForm(env.DB,body.id,revision,role,kind)});
+      case 'posting':return json({form:await updateScrapPosting(env.DB,body.id,revision,{costCenter:body.costCenter,sapDocument:body.sapDocument,pr:body.pr,prDate:body.prDate,po:body.po},kind)});
+      case 'sent':return json({form:await markScrapSent(env.DB,body.id,kind)});
+      case 'delete':return json(await deleteScrapForm(env.DB,body.id,revision,role,kind));
       default:return json({error:'Ação inválida.'},400);
      }
     }catch(e){if(e instanceof ScrapError)return json({error:e.message},e.status);throw e;}

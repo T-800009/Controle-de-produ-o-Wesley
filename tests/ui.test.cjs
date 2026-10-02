@@ -1121,13 +1121,19 @@ test('perfil consulta não vê o botão Tudo OK',async t=>{
  ui.assertHealthy();
 });
 
-// MB51-63 · a aba SCRAP FORM não lê mais a planilha (a aba BAIXA CC fica só no Sheets).
+// MB51-63/64 · a aba SCRAP FORM não lê a planilha (a aba BAIXA CC fica só no Sheets): Scrap Forms | Baixa em CC.
 test('SCRAP FORM abre direto nos formulários e nunca lê a aba BAIXA CC',async t=>{
  const ui=await mount(t,{url:'https://portal.test/?modulo=baixas',respond:url=>url.pathname==='/api/scrap-forms'?Response.json({forms:[],canEdit:false,canDelete:false,role:'viewer'}):apiResponse(url)});
  await ui.settle(()=>ui.container.querySelector('.scrap-forms .empty'));
  assert.equal(ui.container.querySelector('h1').textContent,'SCRAP FORM');
  assert.equal(ui.container.querySelector('.main-nav [aria-selected="true"]').textContent,'SCRAP FORM');
  assert.equal(ui.container.querySelector('.scrap-tabs'),null,'Sem a visão da planilha');
+ const tabs=[...ui.container.querySelectorAll('.scrap-doc-tabs [role="tab"]')];
+ assert.deepEqual(tabs.map(tab=>tab.querySelector('b').textContent),['Scrap Forms','Baixa em CC · FO.FI.C.007']);
+ assert.equal(tabs[0].getAttribute('aria-selected'),'true');
+ assert.ok(ui.requests.includes('/api/scrap-forms?doc=cc'),'Lista das baixas lida do banco');
+ await ui.click('.scrap-doc-tabs [role="tab"]','Baixa em CC · FO.FI.C.007');
+ await ui.settle(()=>/Nenhum FO\.FI\.C\.007 ainda/.test(ui.container.querySelector('.scrap-forms .empty')?.textContent||''));
  assert.equal(ui.requests.some(url=>url.startsWith('/api/automatic')),false,'Nenhuma leitura do Google Sheets');
  ui.assertHealthy();
 });
@@ -1137,25 +1143,26 @@ const scrapFixture=name=>new Uint8Array(fs.readFileSync(path.join(__dirname,'fix
 const sha256=bytes=>require('node:crypto').createHash('sha256').update(bytes).digest('hex');
 const scrapItem={date:'2026-09-24',material:'11272431-00',quantity:1,name:'UNID DE CONTROLE ELETR EBS 5S',defect:'Componente queimado durante o debug.',cause:'F',vin:'1076',op:'19000002673',unitPrice:1054.87,classification:'B'};
 const scrapApprovers={production:'Pessoa Produção',quality:'Pessoa Qualidade',logistics:'Pessoa Logística',finance:'Pessoa Financeiro'};
-function scrapServer({role='admin',forms=[]}={}){
- const state={forms:structuredClone(forms),posts:[]};
+function scrapServer({role='admin',forms=[],cc=[]}={}){
+ const state={forms:structuredClone(forms),cc:structuredClone(cc),posts:[]};
+ const strip=({files,...form})=>({...form,files:files.map(({bytes,...meta})=>meta)});
  const respond=async(url,init)=>{
   if(url.pathname==='/api/scrap-forms'){
    if(url.searchParams.has('lookup'))return Response.json({materials:{'11272431-00':{description:'UNID DE CONTROLE ELETR EBS 5S',unit:'PCS',boms:[{bom:'BC22X — 1268',classification:'B',description:'UNID DE CONTROLE ELETR EBS 5S'}]}}});
    if(url.searchParams.has('file')){
-    const form=state.forms.find(entry=>entry.id===url.searchParams.get('file'));
+    const form=[...state.forms,...state.cc].find(entry=>entry.id===url.searchParams.get('file'));
     const file=form?.files.find(entry=>entry.version===Number(url.searchParams.get('version')));
     return file?new Response(file.bytes,{headers:{'Content-Type':'application/pdf'}}):Response.json({error:'Arquivo não encontrado.'},{status:404});
    }
-   if(!init?.method)return Response.json({forms:state.forms.map(({files,...form})=>({...form,files:files.map(({bytes,...meta})=>meta)})),canEdit:role!=='viewer',canDelete:role==='admin',role});
+   if(!init?.method)return Response.json({forms:(url.searchParams.get('doc')==='cc'?state.cc:state.forms).map(strip),canEdit:role!=='viewer',canDelete:role==='admin',role});
    const body=JSON.parse(init.body);state.posts.push(body);
+   const isCc=body.doc==='cc',list=isCc?state.cc:state.forms;
    const now=new Date('2026-09-24T12:00:00Z').toISOString();
-   const strip=({files,...form})=>({...form,files:files.map(({bytes,...meta})=>meta)});
    if(body.action==='create'){
-    const form={id:'5d1f6a3e-0000-4000-8000-000000000001',number:'SCRAP-2026-0001',status:'draft',data:body.data,signatures:[],fileVersion:0,files:[],revision:1,createdAt:now,updatedAt:now,createdBy:role,signedAt:null,sentAt:null};
-    state.forms.unshift(form);return Response.json({form:strip(form)});
+    const form={id:isCc?'7a2c1b4d-0000-4000-8000-000000000001':'5d1f6a3e-0000-4000-8000-000000000001',number:isCc?'CC-2026-0001':'SCRAP-2026-0001',status:'draft',data:body.data,signatures:[],fileVersion:0,files:[],revision:1,createdAt:now,updatedAt:now,createdBy:role,signedAt:null,sentAt:null};
+    list.unshift(form);return Response.json({form:strip(form)});
    }
-   const form=state.forms.find(entry=>entry.id===body.id);
+   const form=list.find(entry=>entry.id===body.id);
    if(!form)return Response.json({error:'Formulário não encontrado.'},{status:404});
    if(body.revision!==undefined&&body.revision!==form.revision)return Response.json({error:'Outra pessoa alterou este formulário.'},{status:409});
    if(body.action==='update'){form.data=body.data;form.revision++;}
@@ -1167,6 +1174,7 @@ function scrapServer({role='admin',forms=[]}={}){
     if(body.kind==='generated'){form.status='signing';form.signatures=[];}
     else{form.signatures=body.signatures;form.status=body.signatures.filter(entry=>entry.slot&&entry.check==='valid').length>=4?'signed':'signing';form.signedAt=form.status==='signed'?now:null;}
    }
+   if(body.action==='posting'){form.data={...form.data,sapDocument:body.sapDocument??form.data.sapDocument};form.revision++;}
    if(body.action==='sent')form.sentAt=now;
    return Response.json({form:strip(form)});
   }
@@ -1294,6 +1302,96 @@ test('Conferir um PDF mostra assinatura inválida de arquivo regravado; perfil C
  assert.equal(document.querySelector('.scrap-dialog input[aria-label="PDF assinado"]'),null,'Consulta não anexa');
  assert.equal([...document.querySelectorAll('.scrap-dialog button')].some(button=>/Reabrir|Apagar|Salvar rascunho/.test(button.textContent)),false);
  assert.equal(server.state.posts.length,0);
+ await closeDialog(ui);
+ ui.assertHealthy();
+});
+
+// MB51-64 · Baixa em CC (FO.FI.C.007): puxa os itens dos Scrap Forms assinados, gera o PDF com 4 quadros obrigatórios e confere as assinaturas.
+const ccFixture=name=>new Uint8Array(fs.readFileSync(path.join(__dirname,'fixtures','cc',name)));
+const ccApprovers={requester:'Pessoa Solicitante',manager:'Pessoa Gestor',scm:'Pessoa SCM',finance:'Pessoa Financeiro'};
+const ccData={period:'2026-09',items:[{company:'BR00',plant:'BR02',wh:'7000',material:'11272431-00',description:'UNID DE CONTROLE ELETR EBS 5S',quantity:-1,unitCost:1054.87,costCenter:'BR000411',costCenterDescription:'Operational - Chassis'}],mainReason:'Scrapped materials approved in Scrap Form SCRAP-2026-0001. Parts damaged or defective in production, not repairable.',reason:'Scrap',action:'Write off the scrapped quantities from warehouse 7000 through cost center BR000411 - Operational - Chassis.',approvers:ccApprovers,scrapForms:['SCRAP-2026-0001'],sapDocument:'',notes:''};
+const signedScrap={id:'5d1f6a3e-0000-4000-8000-000000000001',number:'SCRAP-2026-0001',status:'signed',data:{formDate:'2026-09-24',items:[scrapItem],approvers:scrapApprovers,costCenter:'',sapDocument:'',pr:'',prDate:'',po:'',notes:''},signatures:[],fileVersion:2,files:[],revision:3,createdAt:'2026-09-24T12:00:00Z',updatedAt:'2026-09-25T12:00:00Z',createdBy:'admin',signedAt:'2026-09-25T12:00:00Z',sentAt:null};
+
+test('BAIXA EM CC: puxa os itens do Scrap Form assinado e gera o FO.FI.C.007 com os quatro quadros de assinatura',async t=>{
+ const server=scrapServer({forms:[signedScrap]});
+ const ui=await mount(t,{url:'https://portal.test/?modulo=baixas&doc=cc',respond:server.respond});
+ await ui.settle(()=>/Criar baixa com eles/.test(ui.container.querySelector('.cc-ready')?.textContent||''));
+ assert.equal(ui.container.querySelector('.scrap-doc-tabs [aria-selected="true"] b').textContent,'Baixa em CC · FO.FI.C.007');
+ assert.equal(ui.container.querySelector('.cc-ready strong').textContent,'1');
+ await ui.click('.scrap-forms button','Nova baixa em CC');
+ await ui.settle(()=>document.querySelector('.cc-dialog .cc-pick-row'));
+ assert.match(document.querySelector('.cc-pick-row').textContent,/SCRAP-2026-0001.*24\/09\/2026.*R\$\s1\.054,87/);
+ await pressIn(ui,'.cc-pick-row input');
+ await pressIn(ui,'.cc-dialog button','Incluir itens dos selecionados (1)');
+ await ui.settle(()=>document.querySelector('.cc-dialog .cc-link'));
+ const field=name=>document.querySelector(`.cc-dialog .scrap-item .${name} input`);
+ assert.equal(field('f-pn').value,'11272431-00');
+ assert.equal(field('f-name').value,'UNID DE CONTROLE ELETR EBS 5S');
+ assert.equal(field('f-qty').value,'-1','Saída do estoque = quantidade negativa');
+ assert.equal(field('f-price').value,'1.054,87');
+ assert.equal(field('f-cc').value,'BR000411');
+ assert.equal(field('f-ccname').value,'Operational - Chassis');
+ assert.match(document.querySelector('.cc-dialog .scrap-item header').textContent,/-R\$\s1\.054,87/);
+ assert.match(document.querySelector('.cc-remarks .cc-main textarea').value,/Scrap Form SCRAP-2026-0001/);
+ assert.equal(document.querySelector('.cc-dialog .cc-pick-row'),null,'O formulário incluído sai da lista');
+ await pressIn(ui,'.cc-dialog button','Gerar PDF para assinatura');
+ await ui.settle(()=>/CC-2026-0001 · Aguardando assinatura/.test(document.querySelector('.cc-dialog h2')?.textContent||''));
+ const create=server.state.posts.find(post=>post.action==='create');
+ assert.equal(create.doc,'cc');assert.deepEqual(create.data.scrapForms,['SCRAP-2026-0001']);assert.equal(create.data.items[0].quantity,-1);
+ const upload=server.state.posts.find(post=>post.action==='upload');
+ assert.equal(upload.doc,'cc');assert.equal(upload.kind,'generated');
+ const pdf=Buffer.from(upload.pdf,'base64').toString('latin1');
+ for(const name of ['(CC-2026-0001)','(Assinatura_Solicitante)','(Assinatura_Gestor)','(Assinatura_SCM)','(Assinatura_Financeiro)'])assert.ok(pdf.includes(name),name);
+ assert.match(upload.name,/^FO\.FI\.C\.007 CC-2026-0001 \S+-\d{4} - para assinatura\.pdf$/);
+ assert.equal(document.querySelectorAll('.cc-dialog .scrap-slot.missing').length,4,'Os quatro quadros são obrigatórios');
+ assert.ok(document.querySelector('.cc-dialog .cc-items-table'),'Emitido: itens só para leitura');
+ assert.equal(server.state.posts.filter(post=>post.doc!=='cc').length,0,'Nada é gravado no Scrap Form');
+ await closeDialog(ui);
+ assert.match(ui.container.querySelector('.cc-row').textContent,/CC-2026-0001.*BR000411.*SCRAP-2026-0001.*Falta Solicitante, Gestor, SCM, Financeiro/);
+ await pressIn(ui,'.scrap-doc-tabs [role="tab"]','Scrap Forms');
+ await ui.settle(()=>ui.container.querySelector('.scrap-row .scrap-row-link'));
+ assert.equal(ui.container.querySelector('.scrap-row .scrap-row-link').textContent,'Baixa CC-2026-0001');
+ ui.assertHealthy();
+});
+
+test('BAIXA EM CC: o PDF devolvido só fica assinado com Solicitante, Gestor, SCM e Financeiro',async t=>{
+ const generated=ccFixture('gerado.pdf');
+ const form={id:'7a2c1b4d-0000-4000-8000-000000000001',number:'CC-2026-0001',status:'signing',data:ccData,signatures:[],fileVersion:1,
+  files:[{version:1,kind:'generated',name:'FO.FI.C.007 CC-2026-0001 Setembro-2026 - para assinatura.pdf',size:generated.length,sha256:sha256(generated),createdAt:'2026-09-24T12:00:00Z',createdBy:'admin',bytes:generated}],revision:2,createdAt:'2026-09-24T12:00:00Z',updatedAt:'2026-09-24T12:00:00Z',createdBy:'admin',signedAt:null,sentAt:null};
+ const server=scrapServer({forms:[signedScrap],cc:[form]});
+ const ui=await mount(t,{url:'https://portal.test/?modulo=baixas&cc='+form.id,respond:server.respond});
+ await ui.settle(()=>document.querySelector('.cc-dialog .scrap-slots'));
+ assert.match(ui.container.querySelector('.cc-row').textContent,/CC-2026-0001.*Setembro\/2026.*Falta Solicitante, Gestor, SCM, Financeiro/);
+ assert.equal(ui.container.querySelector('.cc-ready strong').textContent,'0','O Scrap Form já está nesta baixa');
+ const input=document.querySelector('.cc-dialog input[aria-label="PDF assinado"]');
+ await attach(input,ccFixture('assinado-parcial.pdf'),'parcial.pdf');
+ await ui.settle(()=>/2 assinatura/.test(document.querySelector('.scrap-review')?.textContent||''));
+ let review=document.querySelector('.scrap-review').textContent;
+ assert.match(review,/Itens, valores e nomes são os mesmos do PDF emitido pelo portal/);
+ assert.match(review,/ainda falta: Pessoa SCM \(SCM\), Pessoa Financeiro \(Financeiro\)/);
+ assert.match(review,/Pessoa Gestor · Gestor/);
+ await pressIn(ui,'.scrap-review button','Salvar esta versão');
+ await ui.settle(()=>/Versão 2 guardada/.test(document.querySelector('.scrap-message')?.textContent||''));
+ assert.equal(document.querySelectorAll('.cc-dialog .scrap-slot.signed').length,2);
+ await attach(input,ccFixture('assinado-completo.pdf'),'completo.pdf');
+ await ui.settle(()=>/4 assinatura/.test(document.querySelector('.scrap-review')?.textContent||''));
+ review=document.querySelector('.scrap-review').textContent;
+ assert.match(review,/todos os quadros obrigatórios ficam assinados/);
+ assert.doesNotMatch(review,/cópia mais antiga/,'Mantém as assinaturas já guardadas');
+ await pressIn(ui,'.scrap-review button','Salvar esta versão');
+ await ui.settle(()=>document.querySelector('.cc-dialog .scrap-send.signed'));
+ const uploads=server.state.posts.filter(post=>post.action==='upload');
+ assert.equal(uploads.length,2);assert.ok(uploads.every(post=>post.doc==='cc'));
+ assert.deepEqual(uploads[1].signatures.map(entry=>entry.slot),['requester','manager','scm','finance']);
+ assert.equal(document.querySelectorAll('.cc-dialog .scrap-slot.signed').length,4);
+ assert.match(document.querySelector('.scrap-send-preview').textContent,/FO\.FI\.C\.007 CC-2026-0001 \(Setembro\/2026\) assinado/);
+ const sap=[...document.querySelectorAll('.cc-dialog .cc-posting label')].find(label=>/Documento SAP/.test(label.textContent)).querySelector('input');
+ await typeInto(sap,'4900012345');
+ await pressIn(ui,'.cc-dialog .cc-posting button','Salvar');
+ await ui.settle(()=>server.state.posts.some(post=>post.action==='posting'));
+ const posting=server.state.posts.find(post=>post.action==='posting');
+ assert.equal(posting.doc,'cc');assert.equal(posting.sapDocument,'4900012345');
+ await ui.settle(()=>/Doc\. SAP 4900012345/.test(ui.container.querySelector('.cc-row').textContent));
  await closeDialog(ui);
  ui.assertHealthy();
 });

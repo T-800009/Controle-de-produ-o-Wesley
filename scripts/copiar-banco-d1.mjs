@@ -16,7 +16,7 @@ import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 const SKIP = new Set(["portal_sessions", "portal_attempts", "_portal_migration"]);
-const ORDER = ["datasets", "entries", "manual_checks", "manual_check_state", "op_statuses", "op_status_state", "ana_notes", "scrap_forms", "scrap_files"];
+const ORDER = ["datasets", "entries", "manual_checks", "manual_check_state", "op_statuses", "op_status_state", "ana_notes", "scrap_forms", "scrap_counters", "cc_forms", "cc_counters", "scrap_files"];
 const quote = (name) => '"' + String(name).replaceAll('"', '""') + '"';
 
 function literal(value) {

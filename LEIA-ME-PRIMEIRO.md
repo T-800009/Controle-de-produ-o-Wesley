@@ -1,4 +1,34 @@
-# MB51-63 — SCRAP FORM sem leitura da planilha
+# MB51-64 — Baixa em CC (FO.FI.C.007) no portal
+
+A aba **SCRAP FORM** agora tem dois documentos, cada um com sua lista: **Scrap Forms** e **Baixa em CC · FO.FI.C.007**. O portal guarda e cria os PDFs dos dois. A aba BAIXA CC da planilha continua no Google Sheets e o portal não a lê.
+
+## Fluxo da baixa em CC
+
+1. **Nova baixa em CC**, ou **Criar baixa com eles** no quadro "Scrap Forms prontos para baixa". Esse quadro conta os Scrap Forms assinados por todos que ainda não estão em nenhum FO.FI.C.007.
+2. **Origem: Scrap Forms.** Marque os formulários e clique em **Incluir itens dos selecionados**. Cada peça vira um item com:
+   - **quantidade negativa**, que é a saída do estoque;
+   - o **preço unitário do Scrap Form** como custo unitário;
+   - BR00 / BR02 / 7000 e o centro de custo **BR000411 – Operational - Chassis** como padrão. O portal lembra o último centro de custo usado e tudo pode ser editado.
+
+   Os textos de REMARKS (motivo principal, REASON e ACTION) são preenchidos em inglês, como no modelo. Texto editado à mão não é trocado.
+3. **Itens à mão** também funcionam: company, plant, WH, código, descrição (vem da BOM), quantidade, custo unitário (MM60 ou último Scrap Form), centro de custo e a descrição dele. Quantidade positiva é entrada (sobra no inventário), e o portal avisa. Limite: 20 itens.
+4. **Gerar PDF para assinatura.** O PDF sai em uma página A3 paisagem, no layout do *FO.FI.C.007 - INVENTORY ADJUSTMENT*:
+   - cabeçalho com o mês de referência e o número **CC-2026-0001…**, uma numeração própria que nunca é reaproveitada;
+   - tabela de itens com TOTAL de quantidade e de custo;
+   - REMARKS;
+   - quadro **APPROVAL** com os **4 campos de assinatura digital obrigatórios**: Assinatura_Solicitante (Requester), Assinatura_Gestor (Direct Manager), Assinatura_SCM (SCM Manager) e Assinatura_Financeiro (Finance Department).
+5. **Enviar, assinar no Adobe e anexar o PDF assinado** funcionam como no Scrap Form, com as mesmas conferências (certificado, conteúdo igual ao emitido, cópia antiga, assinatura reaproveitada). A baixa só fica **Assinada** com os quatro quadros conferidos. Uma assinatura feita num campo do Scrap Form não conta aqui.
+6. Depois de emitido, anote o **Documento SAP da baixa**. Ele fica só no portal.
+
+Na lista de Scrap Forms, cada formulário incluído numa baixa mostra **Baixa CC-…**. O botão **Conferir um PDF** confere os dois tipos.
+
+### Banco de dados
+
+Há duas tabelas novas, `cc_forms` e `cc_counters`, que o portal cria sozinho no primeiro acesso. Os PDFs ficam na mesma tabela `scrap_files`. Os scripts de cópia do D1 e de preparação do Turso já incluem as tabelas novas.
+
+---
+
+## Histórico da MB51-63 — SCRAP FORM sem leitura da planilha
 
 - O portal **não lê mais a aba BAIXA CC** do Google Sheets. A aba continua na planilha, do jeito que está; o portal só não depende dela.
 - Saíram o botão "PDFs da planilha (BAIXA CC)", a rota que lia a aba e o arquivo `BAIXA_CC_modelo.xlsx`.

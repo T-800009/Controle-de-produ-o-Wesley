@@ -673,3 +673,38 @@ html { scroll-padding-top: 92px; }
 @media (max-width:640px){.scrap-footer{position:static;background:none;padding-top:4px}.scrap-item-grid .f-date{order:1}.scrap-item-grid .f-pn{order:2}.scrap-item-grid .f-qty{order:3}.scrap-item-grid .f-class{order:4}.scrap-item-grid .f-name{order:5}.scrap-item-grid .f-defect{order:6}.scrap-item-grid .f-cause{order:7}.scrap-item-grid .f-vin{order:8}.scrap-item-grid .f-op{order:9}.scrap-item-grid .f-price{order:10}.scrap-item-grid .f-total{order:11}.scrap-item>header{flex-wrap:wrap}.scrap-dialog .scrap-section{padding:12px}}
 .scrap-fieldset{border:0;margin:0;padding:0;min-width:0}
 fieldset.scrap-fieldset:not(.scrap-approvers){display:flex;flex-direction:column;gap:12px}
+/* MB51-64 · Scrap Forms | Baixa em CC (FO.FI.C.007) */
+.scrap-doc-tabs{display:flex;gap:6px;margin:6px 0 4px;padding:4px;border:1px solid var(--ui-line);border-radius:10px;background:#0b1017;width:max-content;max-width:100%;overflow-x:auto}
+.shell .scrap-doc-tabs button{display:flex;flex-direction:column;align-items:flex-start;gap:2px;padding:8px 16px;border:0;border-radius:7px;background:transparent;color:var(--ui-muted);white-space:nowrap;cursor:pointer}
+.shell .scrap-doc-tabs button:hover{color:var(--ui-text);background:#ffffff08}
+.shell .scrap-doc-tabs button.active{background:#ffffff14;color:var(--ui-text);box-shadow:inset 0 -2px 0 #e32636}
+.scrap-doc-tabs b{font-weight:650;font-size:13px}
+.scrap-doc-tabs small{font-size:10.5px;color:#f2cf7f}
+.scrap-row small.scrap-row-link{color:#a7c6eb}
+.warehouse-metrics .cc-ready button{display:inline-flex;align-items:center;gap:6px;padding:6px 10px;font-size:12px}
+.cc-links{display:flex;flex-wrap:wrap;gap:8px}
+.cc-link{display:inline-flex;align-items:center;gap:6px;padding:5px 6px 5px 10px;border:1px solid #a7c6eb55;border-radius:999px;background:#a7c6eb0f;color:#cfe0f3;font-size:12px;font-variant-numeric:tabular-nums}
+.scrap-dialog .cc-link button{display:inline-grid;place-items:center;width:22px;height:22px;padding:0;border:0;border-radius:50%;background:#ffffff10;color:inherit}
+.cc-pick{gap:6px!important}
+.cc-pick legend{padding:0 0 6px;font-size:11px;color:var(--ui-muted)}
+.scrap-dialog label.cc-pick-row{display:grid;grid-template-columns:20px minmax(120px,max-content) minmax(0,1fr) max-content;align-items:center;gap:10px;padding:8px 10px;border:1px solid #ffffff14;border-radius:8px;background:#0d1219;font-size:12px;color:var(--ui-text);cursor:pointer}
+.scrap-dialog label.cc-pick-row:hover{border-color:#ffffff30}
+.scrap-dialog .cc-pick-row input{width:16px;min-height:16px;height:16px;padding:0;accent-color:#56c08d}
+.cc-pick-row b{font-variant-numeric:tabular-nums}
+.cc-pick-row span{color:var(--ui-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cc-pick-row i{font-style:normal;font-variant-numeric:tabular-nums}
+.cc-empty-note{margin:0;font-size:12px;color:var(--ui-muted)}
+.scrap-dialog textarea{width:100%;min-width:0;min-height:76px;resize:vertical;border:1px solid #ffffff26;border-radius:7px;padding:8px 10px;color:var(--ui-text);background:#0b1017;font:inherit;font-size:13px;line-height:1.5}
+.scrap-dialog textarea:disabled{opacity:.6}
+.scrap-dialog label.missing textarea{border-color:#ff6c79;background:#e326360f}
+fieldset.cc-remarks.scrap-fieldset{display:grid;grid-template-columns:minmax(0,2fr) minmax(0,1fr) minmax(0,2fr);gap:10px;align-items:start}
+.cc-posting{grid-template-columns:minmax(0,320px) auto;justify-content:start}
+.scrap-item-grid.cc-item-grid .f-company,.scrap-item-grid.cc-item-grid .f-plant,.scrap-item-grid.cc-item-grid .f-wh{grid-column:span 1}
+.scrap-item-grid.cc-item-grid .f-pn{grid-column:span 2}
+.scrap-item-grid.cc-item-grid .f-name{grid-column:span 7}
+.scrap-item-grid.cc-item-grid .f-qty,.scrap-item-grid.cc-item-grid .f-price,.scrap-item-grid.cc-item-grid .f-cc,.scrap-item-grid.cc-item-grid .f-total{grid-column:span 2}
+.scrap-item-grid.cc-item-grid .f-ccname{grid-column:span 4}
+.cc-items-table td:nth-child(4){min-width:0}
+.cc-items-table td:nth-child(5){min-width:240px}
+@media (max-width:1100px){.scrap-item-grid.cc-item-grid .f-company,.scrap-item-grid.cc-item-grid .f-plant,.scrap-item-grid.cc-item-grid .f-wh{grid-column:span 2}.scrap-item-grid.cc-item-grid .f-pn{grid-column:span 6}.scrap-item-grid.cc-item-grid .f-name{grid-column:1/-1}.scrap-item-grid.cc-item-grid .f-qty,.scrap-item-grid.cc-item-grid .f-price,.scrap-item-grid.cc-item-grid .f-total{grid-column:span 4}.scrap-item-grid.cc-item-grid .f-cc{grid-column:span 4}.scrap-item-grid.cc-item-grid .f-ccname{grid-column:span 8}fieldset.cc-remarks.scrap-fieldset{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}.cc-remarks .cc-main,.cc-remarks .cc-action{grid-column:1/-1}}
+@media (max-width:640px){.scrap-item-grid.cc-item-grid .f-name,.scrap-item-grid.cc-item-grid .f-ccname{grid-column:1/-1!important}.scrap-item-grid.cc-item-grid>*{order:0!important}fieldset.cc-remarks.scrap-fieldset{grid-template-columns:minmax(0,1fr)}.scrap-dialog label.cc-pick-row{grid-template-columns:20px minmax(0,1fr) max-content}.cc-pick-row span{grid-column:2/-1;grid-row:2;white-space:normal}.cc-posting{grid-template-columns:1fr}.shell .scrap-doc-tabs{width:100%}.shell .scrap-doc-tabs button{flex:1 1 0;padding:8px 10px;white-space:normal;text-align:left}.scrap-item-grid.cc-item-grid>.f-ccname{order:1!important}}

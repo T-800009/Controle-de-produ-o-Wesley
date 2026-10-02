@@ -16,11 +16,14 @@ import {
 } from "pdf-lib";
 import { checkCmsSignature, sha256Hex } from "./pdf-signature.ts";
 import { SCRAP_FORM_LOGO_JPEG } from "./scrap-logo.ts";
+import { CC_TITLE, MAX_CC_ITEMS, ccItemTotal, ccTotals, periodLabel, type CcFormData } from "./cc-form.ts";
 import {
   CAUSES,
+  CC_SLOTS,
   MAX_ITEMS,
   MAX_PDF_BYTES,
   SLOTS,
+  isSlotId,
   brDate,
   formTotal,
   itemTotal,
@@ -276,7 +279,6 @@ export async function buildScrapPdf({ number, data, generatedAt = new Date() }: 
     { label: "Signature", height: 46 },
   ];
   y -= 6;
-  const form = doc.getForm();
   const boxes: string[] = [];
   for (const row of rowsSpec) {
     y -= row.height;
@@ -293,22 +295,7 @@ export async function buildScrapPdf({ number, data, generatedAt = new Date() }: 
           cell(page, fonts, "Não se aplica: todos os itens são classe C", slotX, y, APPROVAL.slot, row.height, { align: "center", size: 6.5, color: MUTED });
           return;
         }
-        const inset = 2;
-        const rect = [slotX + inset, y + inset, slotX + APPROVAL.slot - inset, y + row.height - inset];
-        const widget = doc.context.obj({
-          Type: "Annot",
-          Subtype: "Widget",
-          FT: "Sig",
-          T: PDFString.of(slot.field),
-          TU: PDFHexString.fromText(`${slot.order} ${slot.role}: ${data.approvers[slot.id]}`),
-          Rect: rect,
-          F: 4,
-          P: page.ref,
-        });
-        const ref = doc.context.register(widget);
-        page.node.addAnnot(ref);
-        form.acroForm.addField(ref);
-        boxes.push(`${slot.id}:${rect.map((value) => value.toFixed(1)).join(",")}`);
+        boxes.push(signatureField(doc, page, slot, data.approvers[slot.id], [slotX + 2, y + 2, slotX + APPROVAL.slot - 2, y + row.height - 2]));
       }
     });
   }
@@ -321,19 +308,206 @@ export async function buildScrapPdf({ number, data, generatedAt = new Date() }: 
   page.drawText(footer, { x: left, y: PAGE.margin - 14, size: 6.2, font: regular, color: MUTED });
   page.drawText("Página 1/1", { x: left + CONTENT_WIDTH - regular.widthOfTextAtSize("Página 1/1", 6.2), y: PAGE.margin - 14, size: 6.2, font: regular, color: MUTED });
 
-  doc.setTitle(`Scrap Form ${number}`);
-  doc.setSubject("Formulário de SCRAP A-B");
+  return finish(doc, { title: `Scrap Form ${number}`, subject: "Formulário de SCRAP A-B", keyword: "Scrap Form", number, generatedAt, boxes });
+}
+
+/** Campo de assinatura digital vazio, com o nome do quadro. Devolve o quadro para o Info do PDF. */
+function signatureField(doc: PDFDocument, page: PDFPage, slot: { id: SlotId; field: string; order: string; role: string }, name: string, rect: number[]) {
+  const widget = doc.context.obj({
+    Type: "Annot",
+    Subtype: "Widget",
+    FT: "Sig",
+    T: PDFString.of(slot.field),
+    TU: PDFHexString.fromText(`${slot.order} ${slot.role}: ${name}`),
+    Rect: rect,
+    F: 4,
+    P: page.ref,
+  });
+  const ref = doc.context.register(widget);
+  page.node.addAnnot(ref);
+  doc.getForm().acroForm.addField(ref);
+  return `${slot.id}:${rect.map((value) => value.toFixed(1)).join(",")}`;
+}
+function finish(doc: PDFDocument, meta: { title: string; subject: string; keyword: string; number: string; generatedAt: Date; boxes: string[] }) {
+  doc.setTitle(meta.title);
+  doc.setSubject(meta.subject);
   doc.setAuthor("Controle de Produção WBYD");
   doc.setCreator("Controle de Produção WBYD");
   doc.setProducer("Controle de Produção WBYD");
-  doc.setKeywords(["Scrap Form", number]);
-  doc.setCreationDate(generatedAt);
-  doc.setModificationDate(generatedAt);
+  doc.setKeywords([meta.keyword, meta.number]);
+  doc.setCreationDate(meta.generatedAt);
+  doc.setModificationDate(meta.generatedAt);
   const info = doc.context.lookup(doc.context.trailerInfo.Info, PDFDict);
-  info.set(PDFName.of(FORM_KEY), PDFString.of(number));
+  info.set(PDFName.of(FORM_KEY), PDFString.of(meta.number));
   // Quadros de assinatura (página 1): um campo desenhado à parte só vale se estiver dentro de um deles.
-  info.set(PDFName.of(BOXES_KEY), PDFString.of(boxes.join(";")));
+  info.set(PDFName.of(BOXES_KEY), PDFString.of(meta.boxes.join(";")));
   return doc.save({ useObjectStreams: false, updateFieldAppearances: false });
+}
+
+/* ------------------------------------------------------------------------ */
+/* FO.FI.C.007 — Inventory Adjustment (baixa em centro de custo)             */
+/* ------------------------------------------------------------------------ */
+
+/** A3 paisagem: a planilha original é larga (11 colunas + quadro de aprovação). */
+export const CC_PAGE = { width: 1191, height: 842, margin: 24 };
+const CC_COLUMNS: Column[] = [
+  { key: "item", label: ["ITEM"], width: 40, align: "center" },
+  { key: "company", label: ["COMPANY"], width: 62, align: "center" },
+  { key: "plant", label: ["PLANT"], width: 52, align: "center" },
+  { key: "wh", label: ["WH"], width: 46, align: "center" },
+  { key: "material", label: ["MATERIAL CODE"], width: 92, align: "center" },
+  { key: "description", label: ["DESCRIPTION OF MATERIAL"], width: 300, align: "left" },
+  { key: "quantity", label: ["QTY"], width: 70, align: "center" },
+  { key: "unitCost", label: ["UNIT COST"], width: 95, align: "right" },
+  { key: "total", label: ["TOTAL COST"], width: 105, align: "right" },
+  { key: "costCenter", label: ["COST CENTER"], width: 90, align: "center" },
+  { key: "costCenterDescription", label: ["COST CENTER DESCRIPTION"], width: 191, align: "center" },
+];
+const REMARK_COLUMNS = [
+  { key: "mainReason", label: "INFORM THE MAIN REASON:", width: 230 },
+  { key: "reason", label: "REASON:", width: 130 },
+  { key: "action", label: "ACTION", width: 232 },
+] as const;
+const APPROVAL_COLUMNS = [
+  { key: "responsible", label: "RESPONSIBLE", width: 120 },
+  { key: "name", label: "NAME", width: 150 },
+  { key: "signature", label: "SIGNATURE", width: 171 },
+  { key: "date", label: "DATE", width: 110 },
+] as const;
+
+export async function buildCcPdf({ number, data, generatedAt = new Date() }: { number: string; data: CcFormData; generatedAt?: Date }): Promise<Uint8Array> {
+  if (data.items.length > MAX_CC_ITEMS) throw Error(`Use no máximo ${MAX_CC_ITEMS} itens por formulário.`);
+  const doc = await PDFDocument.create();
+  const page = doc.addPage([CC_PAGE.width, CC_PAGE.height]);
+  const regular = await doc.embedFont(StandardFonts.Helvetica);
+  const bold = await doc.embedFont(StandardFonts.HelveticaBold);
+  const fonts: Fonts = { regular, bold, clean: cleaner(regular) };
+  const left = CC_PAGE.margin;
+  const width = CC_PAGE.width - CC_PAGE.margin * 2;
+  let y = CC_PAGE.height - CC_PAGE.margin;
+
+  // Cabeçalho: logotipo | título | mês de referência.
+  const headerHeight = 46,
+    logoWidth = 110,
+    periodWidth = 230;
+  y -= headerHeight;
+  box(page, left, y, logoWidth, headerHeight);
+  const logo = await doc.embedJpg(base64Bytes(SCRAP_FORM_LOGO_JPEG));
+  page.drawImage(logo, { x: left + (logoWidth - 62) / 2, y: y + (headerHeight - 34) / 2, width: 62, height: 34 });
+  box(page, left + logoWidth, y, width - logoWidth - periodWidth, headerHeight);
+  cell(page, fonts, CC_TITLE, left + logoWidth, y, width - logoWidth - periodWidth, headerHeight, { bold: true, align: "center", size: 15, min: 11, lines: 1 });
+  box(page, left + width - periodWidth, y, periodWidth, headerHeight);
+  cell(page, fonts, periodLabel(data.period), left + width - periodWidth, y + 12, periodWidth, headerHeight - 12, { bold: true, align: "center", size: 14, lines: 1 });
+  cell(page, fonts, `Nº ${number}`, left + width - periodWidth, y + 2, periodWidth, 14, { align: "center", size: 7.5, color: RED, lines: 1 });
+
+  // Tabela de itens.
+  y -= 8;
+  const tableHeader = 28,
+    totalHeight = 18,
+    band = 24,
+    subHeader = 26,
+    footer = 16;
+  const rows = Math.max(10, data.items.length);
+  const fixed = headerHeight + 8 + tableHeader + totalHeight + 10 + band + subHeader + footer;
+  const space = CC_PAGE.height - CC_PAGE.margin * 2 - fixed;
+  const rowHeight = Math.max(15, Math.min(22, Math.floor((space - 4 * 60) / rows)));
+  const approvalHeight = Math.max(60, Math.min(92, Math.floor((space - rowHeight * rows) / 4)));
+  y -= tableHeader;
+  let x = left;
+  for (const column of CC_COLUMNS) {
+    box(page, x, y, column.width, tableHeader, GRAY);
+    cell(page, fonts, column.label.join(" "), x, y, column.width, tableHeader, { bold: true, align: "center", size: 7.5, min: 5.5 });
+    x += column.width;
+  }
+  for (let index = 0; index < rows; index++) {
+    y -= rowHeight;
+    const item = data.items[index];
+    const values: Record<string, string> = item
+      ? {
+          item: String(index + 1),
+          company: item.company,
+          plant: item.plant,
+          wh: item.wh,
+          material: item.material,
+          description: item.description,
+          quantity: quantity(item.quantity),
+          unitCost: money(item.unitCost),
+          total: money(ccItemTotal(item)),
+          costCenter: item.costCenter,
+          costCenterDescription: item.costCenterDescription,
+        }
+      : {};
+    x = left;
+    for (const column of CC_COLUMNS) {
+      box(page, x, y, column.width, rowHeight);
+      if (item) cell(page, fonts, values[column.key] || "", x, y, column.width, rowHeight, { align: column.align, size: 7.4, bold: column.key === "quantity", lines: column.key === "description" ? 2 : 1 });
+      x += column.width;
+    }
+  }
+  // TOTAL: quantidade e custo.
+  y -= totalHeight;
+  const totals = ccTotals(data);
+  const span = CC_COLUMNS.slice(0, 6).reduce((sum, column) => sum + column.width, 0);
+  box(page, left, y, span, totalHeight);
+  cell(page, fonts, "TOTAL", left, y, span, totalHeight, { bold: true, align: "center", size: 8.5 });
+  x = left + span;
+  CC_COLUMNS.slice(6).forEach((column) => {
+    box(page, x, y, column.width, totalHeight);
+    if (column.key === "quantity") cell(page, fonts, quantity(totals.quantity), x, y, column.width, totalHeight, { bold: true, align: "center", size: 8.5 });
+    if (column.key === "total") cell(page, fonts, money(totals.cost), x, y, column.width, totalHeight, { bold: true, align: "right", size: 8.5 });
+    x += column.width;
+  });
+
+  // REMARKS (motivo) | APPROVAL (assinaturas obrigatórias).
+  y -= 10 + band;
+  const remarksWidth = REMARK_COLUMNS.reduce((sum, column) => sum + column.width, 0);
+  box(page, left, y, remarksWidth, band, GRAY);
+  cell(page, fonts, "REMARKS:", left, y, remarksWidth, band, { bold: true, size: 9, lines: 1 });
+  box(page, left + remarksWidth, y, width - remarksWidth, band, GRAY);
+  cell(page, fonts, "APPROVAL :", left + remarksWidth, y, 110, band, { bold: true, size: 9, lines: 1 });
+  cell(page, fonts, "Obs: Mandatory signatures", left + remarksWidth + 110, y, 260, band, { bold: true, size: 9, lines: 1 });
+  y -= subHeader;
+  x = left;
+  for (const column of [...REMARK_COLUMNS, ...APPROVAL_COLUMNS]) {
+    box(page, x, y, column.width, subHeader, GRAY);
+    cell(page, fonts, column.label, x, y, column.width, subHeader, { bold: true, align: column.key === "action" || column.key === "responsible" ? "left" : "center", size: 7.5, lines: 1 });
+    x += column.width;
+  }
+  const blockTop = y;
+  const blockHeight = approvalHeight * 4;
+  x = left;
+  for (const column of REMARK_COLUMNS) {
+    box(page, x, blockTop - blockHeight, column.width, blockHeight);
+    cell(page, fonts, data[column.key], x, blockTop - blockHeight, column.width, blockHeight, { align: "center", size: 10, min: 6.5, lines: 18 });
+    x += column.width;
+  }
+  const boxes: string[] = [];
+  CC_SLOTS.forEach((slot, index) => {
+    const rowY = blockTop - approvalHeight * (index + 1);
+    let columnX = left + remarksWidth;
+    for (const column of APPROVAL_COLUMNS) {
+      box(page, columnX, rowY, column.width, approvalHeight);
+      if (column.key === "responsible") cell(page, fonts, `${slot.order} . ${slot.role}`, columnX, rowY, column.width, approvalHeight, { size: 8, lines: 2 });
+      if (column.key === "name") cell(page, fonts, data.approvers[slot.id], columnX, rowY, column.width, approvalHeight, { align: "center", size: 8.5, lines: 2 });
+      if (column.key === "signature") boxes.push(signatureField(doc, page, slot, data.approvers[slot.id], [columnX + 2, rowY + 2, columnX + column.width - 2, rowY + approvalHeight - 2]));
+      if (column.key === "date") cell(page, fonts, "_____/_____/__________", columnX, rowY, column.width, approvalHeight, { align: "center", size: 8, color: MUTED, lines: 1 });
+      columnX += column.width;
+    }
+  });
+
+  // Rodapé.
+  const stamp = generatedAt.toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
+  const origin = data.scrapForms.length ? ` · origem: ${data.scrapForms.join(", ")}` : "";
+  const footerY = blockTop - blockHeight - 12;
+  page.drawText(fonts.clean(`${number} · gerado no Controle de Produção WBYD em ${stamp}${origin} · cada responsável assina com o ID digital clicando no campo do seu quadro`), {
+    x: left,
+    y: footerY,
+    size: 6.5,
+    font: regular,
+    color: MUTED,
+  });
+  page.drawText("Página 1/1", { x: left + width - regular.widthOfTextAtSize("Página 1/1", 6.5), y: footerY, size: 6.5, font: regular, color: MUTED });
+  return finish(doc, { title: `${CC_TITLE} ${number}`, subject: "Baixa / ajuste de estoque em centro de custo", keyword: "FO.FI.C.007", number, generatedAt, boxes });
 }
 
 /* ------------------------------------------------------------------------ */
@@ -371,7 +545,7 @@ function parseBoxes(raw: string): Box[] {
     .map((part) => {
       const [slot, numbers = ""] = part.split(":");
       const [x1, y1, x2, y2] = numbers.split(",").map(Number);
-      return SLOTS.some((entry) => entry.id === slot) && [x1, y1, x2, y2].every(Number.isFinite) ? { slot: slot as SlotId, x1, y1, x2, y2 } : null;
+      return isSlotId(slot) && [x1, y1, x2, y2].every(Number.isFinite) ? { slot, x1, y1, x2, y2 } : null;
     })
     .filter((box): box is Box => !!box);
 }

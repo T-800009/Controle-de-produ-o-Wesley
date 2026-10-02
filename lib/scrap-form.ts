@@ -11,7 +11,9 @@ export const MAX_ITEMS = 18;
 /** Limite por PDF: o banco guarda o arquivo em partes e o plano gratuito do Cloudflare aceita até 50 consultas por envio. */
 export const MAX_PDF_BYTES = 1_500_000;
 
-export type SlotId = "production" | "quality" | "logistics" | "finance";
+/** Quadros do Scrap Form (production…finance) e do FO.FI.C.007 (requester…finance). */
+export type SlotId = "production" | "quality" | "logistics" | "finance" | "requester" | "manager" | "scm";
+export type DocKind = "scrap" | "cc";
 export type Slot = {
   id: SlotId;
   /** Nome do campo de assinatura no PDF. */
@@ -30,7 +32,16 @@ export const SLOTS: readonly Slot[] = [
   { id: "logistics", field: "Assinatura_Logistica", order: "3ª", role: "Logistics Supervisor", label: "Logística", short: "L", defaultName: "Gleiber Souza" },
   { id: "finance", field: "Assinatura_Financeiro", order: "4ª", role: "Finance Department (If Class A or B)", label: "Financeiro", short: "F", defaultName: "Rosymara Santos" },
 ];
-export const slotById = (id: SlotId) => SLOTS.find((slot) => slot.id === id)!;
+/** FO.FI.C.007 (baixa / ajuste em centro de custo): as 4 assinaturas são obrigatórias. */
+export const CC_SLOTS: readonly Slot[] = [
+  { id: "requester", field: "Assinatura_Solicitante", order: "1ª", role: "Requester", label: "Solicitante", short: "S", defaultName: "Wesley Souza" },
+  { id: "manager", field: "Assinatura_Gestor", order: "2ª", role: "Direct Manager", label: "Gestor", short: "G", defaultName: "André Ribeiro" },
+  { id: "scm", field: "Assinatura_SCM", order: "3ª", role: "SCM Manager", label: "SCM", short: "M", defaultName: "Rogério Riese" },
+  { id: "finance", field: "Assinatura_Financeiro", order: "4ª", role: "Finance Department", label: "Financeiro", short: "F", defaultName: "Rosymara Santos" },
+];
+const ALL_SLOTS: readonly Slot[] = [...SLOTS, ...CC_SLOTS.filter((slot) => slot.id !== "finance")];
+export const slotsOf = (kind: DocKind) => (kind === "cc" ? CC_SLOTS : SLOTS);
+export const slotById = (id: SlotId) => ALL_SLOTS.find((slot) => slot.id === id)!;
 
 export const CAUSES = [
   { code: "A", en: "Damaged during assembly", pt: "Danificado na montagem" },
@@ -60,7 +71,7 @@ export type ScrapItem = {
 export type ScrapFormData = {
   formDate: string;
   items: ScrapItem[];
-  approvers: Record<SlotId, string>;
+  approvers: Record<string, string>;
   costCenter: string;
   sapDocument: string;
   /** Reposição da peça: requisição (PR), data da PR e pedido (PO). Não vão no PDF. */
@@ -136,12 +147,10 @@ export function emptyItem(previous?: Partial<ScrapItem>, date = todayIso()): Scr
     classification: "",
   };
 }
-export function defaultApprovers(saved?: Partial<Record<SlotId, string>> | null) {
-  return Object.fromEntries(
-    SLOTS.map((slot) => [slot.id, String(saved?.[slot.id] || "").trim() || slot.defaultName]),
-  ) as Record<SlotId, string>;
+export function defaultApprovers(saved?: Partial<Record<string, string>> | null, slots: readonly Slot[] = SLOTS) {
+  return Object.fromEntries(slots.map((slot) => [slot.id, String(saved?.[slot.id] || "").trim() || slot.defaultName])) as Record<string, string>;
 }
-export function emptyForm(approvers?: Partial<Record<SlotId, string>> | null): ScrapFormData {
+export function emptyForm(approvers?: Partial<Record<string, string>> | null): ScrapFormData {
   const date = todayIso();
   return { formDate: date, items: [emptyItem(undefined, date)], approvers: defaultApprovers(approvers), costCenter: "", sapDocument: "", pr: "", prDate: "", po: "", notes: "" };
 }
@@ -153,7 +162,7 @@ export const materialCode = (value: unknown) =>
     .replace(/\s+/g, "")
     .toUpperCase();
 
-const text = (value: unknown, max: number) =>
+export const text = (value: unknown, max: number) =>
   String(value ?? "")
     .replace(/[\u0000-\u001f\u007f]+/g, " ")
     .replace(/\s+/g, " ")
@@ -170,7 +179,7 @@ export function parseBrNumber(raw: string): number | null {
   let value = String(raw).trim().replace(/R\$|\s/g, "");
   if (!value) return null;
   if (value.includes(",")) value = value.replace(/\./g, "").replace(",", ".");
-  else if (/^\d{1,3}(\.\d{3})+$/.test(value)) value = value.replace(/\./g, "");
+  else if (/^-?\d{1,3}(\.\d{3})+$/.test(value)) value = value.replace(/\./g, "");
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
 }
@@ -259,15 +268,18 @@ export function pdfProblems(data: ScrapFormData): string[] {
 /** Nome do campo → quadro, só pelos nomes que o portal grava (Assinatura_Producao…). */
 export function slotFromFieldName(name: string): SlotId | null {
   const key = name.trim().toLowerCase();
-  return SLOTS.find((slot) => slot.field.toLowerCase() === key)?.id || null;
+  return ALL_SLOTS.find((slot) => slot.field.toLowerCase() === key)?.id || null;
 }
+export const isSlotId = (value: unknown): value is SlotId => ALL_SLOTS.some((slot) => slot.id === value);
 
 /** Só uma assinatura conferida preenche um quadro. */
 const accepted = (signature: ScrapSignature) => signature.check === "valid";
 export type SlotProgress = { slot: Slot; required: boolean; signature: ScrapSignature | null; expected: string };
-export function signatureProgress(data: ScrapFormData, signatures: ScrapSignature[]) {
-  const required = new Set(requiredSlots(data).map((slot) => slot.id));
-  const slots: SlotProgress[] = SLOTS.map((slot) => {
+type ProgressData = { approvers: Record<string, string>; items: unknown[] };
+export function signatureProgress(data: ProgressData, signatures: ScrapSignature[], kind: DocKind = "scrap") {
+  const list = slotsOf(kind);
+  const required = new Set((kind === "cc" ? list : requiredSlots(data as ScrapFormData)).map((slot) => slot.id));
+  const slots: SlotProgress[] = list.map((slot) => {
     const candidates = signatures.filter((signature) => signature.slot === slot.id);
     const signature = candidates.find(accepted) || candidates[0] || null;
     return { slot, required: required.has(slot.id), signature, expected: data.approvers[slot.id] || slot.defaultName };
@@ -275,7 +287,7 @@ export function signatureProgress(data: ScrapFormData, signatures: ScrapSignatur
   const signed = slots.filter((entry) => entry.signature && accepted(entry.signature));
   const missing = slots.filter((entry) => entry.required && !(entry.signature && accepted(entry.signature)));
   const issues: string[] = [];
-  const where = (signature: ScrapSignature) => (signature.slot ? slotById(signature.slot).label : signature.field);
+  const where = (signature: ScrapSignature) => (signature.slot ? list.find((slot) => slot.id === signature.slot)?.label || slotById(signature.slot).label : signature.field);
   for (const signature of signatures) {
     const who = signature.signer || "alguém";
     if (signature.check === "invalid") issues.push(`A assinatura de ${who} (${where(signature)}) não confere: ${signature.detail || "o PDF foi alterado depois dela."}`);
@@ -283,6 +295,7 @@ export function signatureProgress(data: ScrapFormData, signatures: ScrapSignatur
     if (signature.check === "valid" && signature.selfSigned)
       issues.push(`${who} (${where(signature)}) assinou com um ID digital próprio (autoassinado), não emitido pela certificadora da empresa.`);
     if (!signature.slot) issues.push(`${who} assinou num campo criado à parte (${signature.field}), fora dos quadros do formulário.`);
+    else if (!list.some((slot) => slot.id === signature.slot)) issues.push(`${who} assinou um campo (${signature.field}) que não é deste formulário.`);
   }
   const bySigner = new Map<string, string[]>();
   for (const entry of signed) {
@@ -298,21 +311,20 @@ export function signatureProgress(data: ScrapFormData, signatures: ScrapSignatur
     );
   return { slots, signed, missing, issues, complete: missing.length === 0 && signatures.length > 0 };
 }
-export function statusFromSignatures(data: ScrapFormData, signatures: ScrapSignature[]): ScrapStatus {
-  return signatureProgress(data, signatures).complete ? "signed" : "signing";
+export function statusFromSignatures(data: ProgressData, signatures: ScrapSignature[], kind: DocKind = "scrap"): ScrapStatus {
+  return signatureProgress(data, signatures, kind).complete ? "signed" : "signing";
 }
 
 /** Valida o resultado da leitura das assinaturas que chega da tela. */
 export function sanitizeSignatures(input: unknown): ScrapSignature[] {
   if (!Array.isArray(input) || input.length > 20) throw Error("Leitura de assinaturas inválida.");
   const checks = new Set(["valid", "intact", "invalid", "unchecked"]);
-  const slots = new Set<string>(SLOTS.map((slot) => slot.id));
   return input.map((raw: any) => {
     if (!raw || typeof raw !== "object" || !checks.has(raw.check)) throw Error("Leitura de assinaturas inválida.");
     const signedAt = typeof raw.signedAt === "string" && !Number.isNaN(Date.parse(raw.signedAt)) ? new Date(raw.signedAt).toISOString() : null;
     return {
       field: text(raw.field, 80),
-      slot: slots.has(raw.slot) ? (raw.slot as SlotId) : null,
+      slot: isSlotId(raw.slot) ? raw.slot : null,
       signer: text(raw.signer, 120),
       signedAt,
       // "intact" (versões de teste) nunca conta como conferida.
