@@ -1,0 +1,154 @@
+{
+  "date": "2026-09-28T14:01:50.462Z",
+  "op": "19000002315",
+  "records": 597,
+  "types": {
+    "261": 588,
+    "262": 9
+  },
+  "depots": {
+    "2000": 59,
+    "7000": 538
+  },
+  "checks": [
+    {
+      "material": "20513481-00",
+      "consumption": 0,
+      "evidence": {
+        "issued": 2,
+        "reversed": 2,
+        "net": 0,
+        "count": 2,
+        "duplicates": 0,
+        "issue": "",
+        "depots": [
+          "2000"
+        ],
+        "units": [],
+        "documents": [
+          {
+            "document": "4900720549",
+            "year": "2026",
+            "item": "1",
+            "type": "262",
+            "quantity": -2,
+            "depot": "2000",
+            "date": "Date(2026,8,4)"
+          },
+          {
+            "document": "4900665403",
+            "year": "2026",
+            "item": "1",
+            "type": "261",
+            "quantity": 2,
+            "depot": "2000",
+            "date": "Date(2026,8,4)"
+          }
+        ]
+      }
+    },
+    {
+      "material": "19667866-00",
+      "consumption": 0,
+      "evidence": null
+    },
+    {
+      "material": "17329419-00",
+      "consumption": 2,
+      "evidence": {
+        "issued": 4,
+        "reversed": 2,
+        "net": 2,
+        "count": 3,
+        "duplicates": 0,
+        "issue": "",
+        "depots": [
+          "2000"
+        ],
+        "units": [],
+        "documents": [
+          {
+            "document": "4900723153",
+            "year": "2026",
+            "item": "1",
+            "type": "261",
+            "quantity": 2,
+            "depot": "2000",
+            "date": "Date(2026,8,10)"
+          },
+          {
+            "document": "4900665296",
+            "year": "2026",
+            "item": "1",
+            "type": "262",
+            "quantity": -2,
+            "depot": "2000",
+            "date": "Date(2026,8,4)"
+          },
+          {
+            "document": "4900581328",
+            "year": "2026",
+            "item": "1",
+            "type": "261",
+            "quantity": 2,
+            "depot": "2000",
+            "date": "Date(2026,7,27)"
+          }
+        ]
+      }
+    },
+    {
+      "material": "11242550-00",
+      "consumption": 15,
+      "evidence": {
+        "issued": 30,
+        "reversed": 15,
+        "net": 15,
+        "count": 3,
+        "duplicates": 0,
+        "issue": "",
+        "depots": [
+          "7000"
+        ],
+        "units": [],
+        "documents": [
+          {
+            "document": "4900900383",
+            "year": "2026",
+            "item": "1",
+            "type": "261",
+            "quantity": 15,
+            "depot": "7000",
+            "date": "Date(2026,8,25)"
+          },
+          {
+            "document": "4900900382",
+            "year": "2026",
+            "item": "1",
+            "type": "262",
+            "quantity": -15,
+            "depot": "7000",
+            "date": "Date(2026,8,22)"
+          },
+          {
+            "document": "4900849937",
+            "year": "2026",
+            "item": "1",
+            "type": "261",
+            "quantity": 15,
+            "depot": "7000",
+            "date": "Date(2026,8,22)"
+          }
+        ]
+      }
+    }
+  ],
+  "benchmark": {
+    "records": 44178,
+    "materials": 579,
+    "ops": 74,
+    "oldMs": 5347,
+    "newMs": 322,
+    "scope": "Conciliação em Node local, uma execução por versão; não mede a rede nem o navegador."
+  }
+}
