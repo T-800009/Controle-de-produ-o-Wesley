@@ -1158,8 +1158,15 @@ function scrapServer({role='admin',forms=[],cc=[]}={}){
    const body=JSON.parse(init.body);state.posts.push(body);
    const isCc=body.doc==='cc',list=isCc?state.cc:state.forms;
    const now=new Date('2026-09-24T12:00:00Z').toISOString();
-   if(body.action==='create'){
-    const form={id:isCc?'7a2c1b4d-0000-4000-8000-000000000001':'5d1f6a3e-0000-4000-8000-000000000001',number:isCc?'CC-2026-0001':'SCRAP-2026-0001',status:'draft',data:body.data,signatures:[],fileVersion:0,files:[],revision:1,createdAt:now,updatedAt:now,createdBy:role,signedAt:null,sentAt:null};
+   if(body.action==='create'||body.action==='import'){
+    const seq=String(list.length+1).padStart(4,'0'),id=(isCc?'7a2c1b4d':'5d1f6a3e')+'-0000-4000-8000-00000000'+seq;
+    const form={id,number:(isCc?'CC-2026-':'SCRAP-2026-')+seq,status:'draft',data:body.data,signatures:[],fileVersion:0,files:[],revision:1,createdAt:now,updatedAt:now,createdBy:role,signedAt:null,sentAt:null};
+    if(body.action==='import'){
+     const bytes=new Uint8Array(Buffer.from(body.pdf,'base64'));
+     form.data={...body.data,source:body.name};form.signatures=body.signatures;form.fileVersion=1;
+     form.files=[{version:1,kind:'signed',name:body.name,size:bytes.length,sha256:sha256(bytes),createdAt:now,createdBy:role,bytes}];
+     form.status=body.signatures.filter(entry=>entry.slot&&entry.check==='valid').length>=4?'signed':'signing';
+    }
     list.unshift(form);return Response.json({form:strip(form)});
    }
    const form=list.find(entry=>entry.id===body.id);
@@ -1392,6 +1399,78 @@ test('BAIXA EM CC: o PDF devolvido só fica assinado com Solicitante, Gestor, SC
  const posting=server.state.posts.find(post=>post.action==='posting');
  assert.equal(posting.doc,'cc');assert.equal(posting.sapDocument,'4900012345');
  await ui.settle(()=>/Doc\. SAP 4900012345/.test(ui.container.querySelector('.cc-row').textContent));
+ await closeDialog(ui);
+ ui.assertHealthy();
+});
+
+// MB51-65 · Importar os formulários que já existiam (Excel → PDF assinado no Adobe).
+const legacyFixture=name=>new Uint8Array(fs.readFileSync(path.join(__dirname,'fixtures','legado',name)));
+async function attachMany(input,files){
+ const {File}=require('node:buffer');
+ Object.defineProperty(input,'files',{configurable:true,value:files.map(([bytes,name])=>new File([bytes],name,{type:'application/pdf',lastModified:1}))});
+ await act(async()=>{input.dispatchEvent(new window.Event('change',{bubbles:true}));});
+}
+test('IMPORTAR PDFs existentes: lê itens e assinaturas, guarda o PDF original e o que não tem assinatura vira rascunho',async t=>{
+ const server=scrapServer();
+ const ui=await mount(t,{url:'https://portal.test/?modulo=baixas',respond:server.respond});
+ await ui.settle(()=>ui.container.querySelector('.scrap-forms .empty'));
+ await ui.click('.scrap-forms button','Importar PDFs existentes');
+ await ui.settle(()=>document.querySelector('.import-dialog input[aria-label="PDFs para importar"]'));
+ await attachMany(document.querySelector('.import-dialog input[aria-label="PDFs para importar"]'),[
+  [legacyFixture('legado-scrap-assinado.pdf'),'Formulario de SCRAP A-B 22.09.2026 Falta assinar Rosy.pdf'],
+  [legacyFixture('legado-scrap.pdf'),'Formulario de SCRAP A-B 22.09.2026 sem assinatura.pdf'],
+  [legacyFixture('legado-cc-assinado.pdf'),'Ajuste Inventario Agosto 2026.pdf'],
+  [ccFixture('gerado.pdf'),'FO.FI.C.007 do portal.pdf'],
+ ]);
+ await ui.settle(()=>document.querySelectorAll('.import-row').length===4&&!/Lendo/.test(document.querySelector('.import-dialog .scrap-check-file').textContent));
+ const row=name=>[...document.querySelectorAll('.import-row')].find(entry=>entry.textContent.includes(name));
+ const signed=row('Falta assinar Rosy').textContent;
+ assert.match(signed,/22\/09\/2026 · 2 item\(s\) · R\$\s3\.467,97 · 11272431-00 UNID DE CONTROLE ELETR EBS 5S/);
+ assert.match(signed,/Produção: Pessoa Producao ✓/);assert.match(signed,/Qualidade: Pessoa Qualidade ✓/);assert.match(signed,/Logística: Pessoa Logistica ✓/);
+ assert.match(signed,/Entra aguardando: falta Financeiro/);
+ assert.match(row('sem assinatura').textContent,/Sem assinatura: entra como rascunho/);
+ const cc=row('Ajuste Inventario').textContent;
+ assert.match(cc,/Agosto\/2026 · 2 item\(s\)/);assert.match(cc,/Solicitante: Pessoa Solicitante ✓/);assert.match(cc,/falta SCM, Financeiro/);
+ assert.equal(row('Ajuste Inventario').querySelector('select').value,'cc');
+ assert.match(row('do portal').textContent,/É um PDF emitido pelo portal \(CC-2026-0001\)/);
+ assert.equal(row('do portal').querySelector('input[type="checkbox"]').disabled,true);
+ await pressIn(ui,'.import-dialog button','Importar 3 formulário(s)');
+ await ui.settle(()=>document.querySelectorAll('.import-row.done').length===3);
+ const imports=server.state.posts.filter(post=>post.action==='import');
+ assert.equal(imports.length,2);
+ assert.equal(imports[0].doc,'cc','Em ordem de data: agosto antes de setembro');
+ const scrapImport=imports.find(post=>!post.doc);
+ assert.equal(scrapImport.name,'Formulario de SCRAP A-B 22.09.2026 Falta assinar Rosy.pdf');
+ assert.deepEqual(scrapImport.signatures.map(entry=>entry.slot),['production','quality','logistics']);
+ assert.equal(scrapImport.data.items.length,2);assert.equal(scrapImport.data.items[0].unitPrice,1233.89);assert.equal(scrapImport.data.items[1].cause,'C');
+ assert.deepEqual(Buffer.from(scrapImport.pdf,'base64'),Buffer.from(legacyFixture('legado-scrap-assinado.pdf')),'PDF original, sem alteração');
+ const draft=server.state.posts.find(post=>post.action==='create');
+ assert.equal(draft.data.items.length,2);assert.equal(draft.data.source,undefined);
+ assert.match(document.querySelector('.import-dialog [role="status"]').textContent,/3 formulário\(s\) cadastrado\(s\)/);
+ await pressIn(ui,'.import-dialog .scrap-footer button','Fechar');
+ await ui.settle(()=>!document.querySelector('.import-dialog')&&ui.container.querySelectorAll('.scrap-row').length===2);
+ await wait(20);
+ const imported=[...ui.container.querySelectorAll('.scrap-row')].find(entry=>/Importado/.test(entry.textContent));
+ assert.match(imported.textContent,/Falta Financeiro/);
+ // Corrigir a transcrição sem mexer nas assinaturas.
+ await act(async()=>{imported.dispatchEvent(new window.MouseEvent('click',{bubbles:true,button:0}));});
+ await ui.settle(()=>document.querySelector('.scrap-dialog .scrap-slots')&&document.querySelector('.scrap-dialog .scrap-item'));
+ assert.match(document.querySelector('.scrap-dialog [data-slot="dialog-description"], .scrap-dialog p').textContent,/importado de "Formulario de SCRAP A-B 22.09.2026 Falta assinar Rosy.pdf"/);
+ assert.equal([...document.querySelectorAll('.scrap-dialog .scrap-footer button')].some(button=>/Gerar PDF/.test(button.textContent)),false,'O PDF já existe: não gera outro');
+ await typeInto(document.querySelector('.scrap-dialog .scrap-item .f-defect input'),'Fuga de tensão (corrigido)');
+ await pressIn(ui,'.scrap-dialog .scrap-footer button','Salvar dados');
+ await ui.settle(()=>/Dados corrigidos/.test(document.querySelector('.scrap-message')?.textContent||''));
+ assert.equal(server.state.posts.at(-1).action,'update');assert.equal(server.state.posts.at(-1).data.items[0].defect,'Fuga de tensão (corrigido)');
+ // A Rosy assina o PDF importado: confere contra o PDF original e fecha o formulário.
+ await attach(document.querySelector('.scrap-dialog input[aria-label="PDF assinado"]'),legacyFixture('legado-scrap-completo.pdf'),'assinado-rosy.pdf');
+ await ui.settle(()=>/4 assinatura/.test(document.querySelector('.scrap-review')?.textContent||''));
+ const review=document.querySelector('.scrap-review').textContent;
+ assert.match(review,/Itens, valores e nomes são os mesmos do PDF importado/);
+ assert.match(review,/todos os quadros obrigatórios ficam assinados/);
+ assert.doesNotMatch(review,/cópia mais antiga/);
+ await pressIn(ui,'.scrap-review button','Salvar esta versão');
+ await ui.settle(()=>document.querySelector('.scrap-dialog .scrap-send.signed'));
+ assert.equal(document.querySelectorAll('.scrap-dialog .scrap-slot.signed').length,4);
  await closeDialog(ui);
  ui.assertHealthy();
 });

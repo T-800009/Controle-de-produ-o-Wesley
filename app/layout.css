@@ -708,3 +708,26 @@ fieldset.cc-remarks.scrap-fieldset{display:grid;grid-template-columns:minmax(0,2
 .cc-items-table td:nth-child(5){min-width:240px}
 @media (max-width:1100px){.scrap-item-grid.cc-item-grid .f-company,.scrap-item-grid.cc-item-grid .f-plant,.scrap-item-grid.cc-item-grid .f-wh{grid-column:span 2}.scrap-item-grid.cc-item-grid .f-pn{grid-column:span 6}.scrap-item-grid.cc-item-grid .f-name{grid-column:1/-1}.scrap-item-grid.cc-item-grid .f-qty,.scrap-item-grid.cc-item-grid .f-price,.scrap-item-grid.cc-item-grid .f-total{grid-column:span 4}.scrap-item-grid.cc-item-grid .f-cc{grid-column:span 4}.scrap-item-grid.cc-item-grid .f-ccname{grid-column:span 8}fieldset.cc-remarks.scrap-fieldset{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}.cc-remarks .cc-main,.cc-remarks .cc-action{grid-column:1/-1}}
 @media (max-width:640px){.scrap-item-grid.cc-item-grid .f-name,.scrap-item-grid.cc-item-grid .f-ccname{grid-column:1/-1!important}.scrap-item-grid.cc-item-grid>*{order:0!important}fieldset.cc-remarks.scrap-fieldset{grid-template-columns:minmax(0,1fr)}.scrap-dialog label.cc-pick-row{grid-template-columns:20px minmax(0,1fr) max-content}.cc-pick-row span{grid-column:2/-1;grid-row:2;white-space:normal}.cc-posting{grid-template-columns:1fr}.shell .scrap-doc-tabs{width:100%}.shell .scrap-doc-tabs button{flex:1 1 0;padding:8px 10px;white-space:normal;text-align:left}.scrap-item-grid.cc-item-grid>.f-ccname{order:1!important}}
+/* MB51-65 · Importar PDFs existentes */
+.import-dialog{max-width:min(980px,96vw)!important}
+.scrap-check-file.disabled{opacity:.55;pointer-events:none}
+.import-list{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:8px}
+.import-row{display:flex;flex-direction:column;gap:6px;padding:10px 12px;border:1px solid #ffffff1c;border-radius:9px;background:#0d1219}
+.import-row.blocked{opacity:.75;border-style:dashed}
+.import-row.done{border-color:#56c08d66;background:#2f9e6a0c}
+.import-row.failed{border-color:#ff6c7966}
+.import-row-head{display:flex;align-items:center;gap:10px;min-width:0}
+.scrap-dialog label.import-pick{flex-direction:row;align-items:center;gap:9px;flex:1;min-width:0;font-size:13px;color:var(--ui-text);cursor:pointer}
+.scrap-dialog .import-pick input{width:16px;min-height:16px;height:16px;padding:0;flex-shrink:0;accent-color:#56c08d}
+.import-pick b{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.scrap-dialog .import-row-head select{width:auto;min-height:32px;padding:4px 8px;font-size:12px;flex-shrink:0}
+.import-row-head .scrap-status{flex-shrink:0}
+.import-summary,.import-outcome{font-size:12px;color:#c9d6e4;overflow-wrap:anywhere}
+.import-outcome{color:#f2cf7f}
+.import-signatures{display:flex;flex-wrap:wrap;gap:6px}
+.import-signatures i{font-style:normal;font-size:11px;padding:3px 8px;border-radius:999px;border:1px solid #56c08d88;color:#a7efc8;background:#2f9e6a14}
+.import-signatures i.invalid{border-color:#ff6c79;color:#ffb0b7;background:#e3263614}
+.import-signatures i.unchecked,.import-signatures i.intact{border-color:#e0b75c88;color:#f2cf7f;background:#e0b75c12}
+.import-row p{display:flex;gap:7px;align-items:flex-start;margin:0;font-size:12px;line-height:1.5}
+.import-row p svg{flex-shrink:0;margin-top:3px}
+@media (max-width:640px){.import-row-head{flex-wrap:wrap}.scrap-dialog label.import-pick{flex-basis:100%}}

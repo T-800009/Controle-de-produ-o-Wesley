@@ -21,6 +21,7 @@ import {
   ShieldAlert,
   Trash2,
   TriangleAlert,
+  Upload,
   X,
   XCircle,
 } from "lucide-react";
@@ -30,6 +31,7 @@ import {
   CAUSES,
   CC_SLOTS,
   MAX_ITEMS,
+  MAX_PDF_BYTES,
   SLOTS,
   brDate,
   brDateTime,
@@ -39,6 +41,7 @@ import {
   emptyItem,
   formHistory,
   formTotal,
+  isTranscription,
   itemTotal,
   materialCode,
   parseBrNumber,
@@ -75,6 +78,7 @@ import {
   type CcItem,
 } from "@/lib/cc-form";
 import type { ScrapPdfReading } from "@/lib/scrap-pdf";
+import type { LegacyDocument } from "@/lib/legacy-import";
 
 const pdfTools = () => import("@/lib/scrap-pdf");
 
@@ -262,7 +266,8 @@ export default function ScrapForms() {
   const scrap = useDocList<ScrapForm>("scrap");
   const cc = useDocList<CcForm>("cc");
   const [ops, setOps] = useState<string[]>([]),
-    [checking, setChecking] = useState(false);
+    [checking, setChecking] = useState(false),
+    [importing, setImporting] = useState(false);
   useEffect(() => {
     // OPs das BOMs cadastradas (só metadados) para sugerir no campo Ordem.
     requestJson("/api/data")
@@ -294,11 +299,21 @@ export default function ScrapForms() {
         ))}
       </div>
       {tab === "scrap" ? (
-        <ScrapFormList docs={scrap} ops={ops} ccByScrap={ccByScrap} deepLink={linkFor("scrap")} onLinkUsed={() => setLink(null)} onCheck={() => setChecking(true)} />
+        <ScrapFormList docs={scrap} ops={ops} ccByScrap={ccByScrap} deepLink={linkFor("scrap")} onLinkUsed={() => setLink(null)} onCheck={() => setChecking(true)} onImport={() => setImporting(true)} />
       ) : (
-        <CcFormList docs={cc} scrapDocs={scrap} ccByScrap={ccByScrap} deepLink={linkFor("cc")} onLinkUsed={() => setLink(null)} onCheck={() => setChecking(true)} />
+        <CcFormList docs={cc} scrapDocs={scrap} ccByScrap={ccByScrap} deepLink={linkFor("cc")} onLinkUsed={() => setLink(null)} onCheck={() => setChecking(true)} onImport={() => setImporting(true)} />
       )}
       <PdfCheckDialog open={checking} onClose={() => setChecking(false)} />
+      {importing && (
+        <ImportDialog
+          existing={[...(scrap.list?.forms || []), ...(cc.list?.forms || [])]}
+          onImported={() => {
+            void scrap.load();
+            void cc.load();
+          }}
+          onClose={() => setImporting(false)}
+        />
+      )}
     </section>
   );
 }
@@ -380,6 +395,7 @@ function ScrapFormList({
   deepLink,
   onLinkUsed,
   onCheck,
+  onImport,
 }: {
   docs: DocList<ScrapForm>;
   ops: string[];
@@ -387,6 +403,7 @@ function ScrapFormList({
   deepLink: string | null;
   onLinkUsed: () => void;
   onCheck: () => void;
+  onImport: () => void;
 }) {
   const { list, busy } = docs;
   const [query, setQuery] = useState(""),
@@ -429,6 +446,12 @@ function ScrapFormList({
             <button className="primary" onClick={() => setOpened({ id: null, session: Date.now() })}>
               <FilePlus2 size={16} />
               Novo Scrap Form
+            </button>
+          )}
+          {list?.canEdit && (
+            <button onClick={onImport} title="Cadastra os formulários que já existem (PDF do Excel assinado no Adobe)">
+              <Upload size={16} />
+              Importar PDFs existentes
             </button>
           )}
           <button onClick={onCheck}>
@@ -567,6 +590,7 @@ function ScrapFormList({
                       {(form.data.pr || form.data.po) && <small>{[form.data.pr && `PR ${form.data.pr}`, form.data.po && `PO ${form.data.po}`].filter(Boolean).join(" · ")}</small>}
                       {form.data.sapDocument && <small>Doc. SAP {form.data.sapDocument}</small>}
                       {cc && <small className="scrap-row-link">Baixa {cc}</small>}
+                      {form.data.source && <small>Importado</small>}
                     </span>
                   </button>
                 );
@@ -607,6 +631,7 @@ function CcFormList({
   deepLink,
   onLinkUsed,
   onCheck,
+  onImport,
 }: {
   docs: DocList<CcForm>;
   scrapDocs: DocList<ScrapForm>;
@@ -614,6 +639,7 @@ function CcFormList({
   deepLink: string | null;
   onLinkUsed: () => void;
   onCheck: () => void;
+  onImport: () => void;
 }) {
   const { list, busy } = docs;
   const [query, setQuery] = useState(""),
@@ -659,6 +685,12 @@ function CcFormList({
             <button className="primary" onClick={() => setOpened({ id: null, session: Date.now() })}>
               <FilePlus2 size={16} />
               Nova baixa em CC
+            </button>
+          )}
+          {list?.canEdit && (
+            <button onClick={onImport} title="Cadastra os formulários que já existem (PDF do Excel assinado no Adobe)">
+              <Upload size={16} />
+              Importar PDFs existentes
             </button>
           )}
           <button onClick={onCheck}>
@@ -807,6 +839,7 @@ function CcFormList({
                       <i className={`scrap-status ${form.status}`}>{statusText("cc", form)}</i>
                       {form.status === "signed" && <small>{form.sentAt ? `Enviado ${brDate(form.sentAt.slice(0, 10))}` : "Ainda não enviado"}</small>}
                       {form.data.sapDocument && <small>Doc. SAP {form.data.sapDocument}</small>}
+                      {form.data.source && <small>Importado</small>}
                     </span>
                   </button>
                 );
@@ -940,7 +973,14 @@ function DialogFooter({
       <button disabled={!!busy} onClick={onClose}>
         Fechar
       </button>
-      {editable && (
+      {editable && form && form.status !== "draft" && (
+        // Importado: só os dados (transcrição do PDF) mudam; o PDF assinado continua o mesmo.
+        <button className="primary" disabled={!!busy || !dirty} onClick={onSave}>
+          <Save size={16} />
+          {busy === "save" ? "Salvando…" : "Salvar dados"}
+        </button>
+      )}
+      {editable && (!form || form.status === "draft") && (
         <>
           <button disabled={!!busy || !dirty} onClick={onSave}>
             <Save size={16} />
@@ -973,7 +1013,8 @@ function SignatureSection<F extends AnyForm>({ kind, form, canEdit, runner, onSa
     await run("read", async () => {
       const bytes = new Uint8Array(await file.arrayBuffer());
       const { readScrapPdf } = await pdfTools();
-      const reading = await readScrapPdf(bytes);
+      // Formulário importado (PDF feito no Excel): os campos valem pela posição na linha de assinaturas.
+      const reading = await readScrapPdf(bytes, { legacy: isTranscription(form), kind });
       setReview(await reviewUpload(kind, form, file.name, bytes, reading));
     });
     if (fileInput.current) fileInput.current.value = "";
@@ -1200,7 +1241,7 @@ function ScrapFormDialog({
   const { busy, run, setMessage } = runner;
   const [showProblems, setShowProblems] = useState(false),
     [posting, setPosting] = useState(() => postingOf(form?.data));
-  const editable = canEdit && (!form || form.status === "draft");
+  const editable = canEdit && (!form || form.status === "draft" || isTranscription(form));
   const problems = useMemo(() => pdfProblems(data), [data]);
   const history = useMemo(() => formHistory(forms.filter((entry) => entry.id !== form?.id)), [forms, form?.id]);
   const lookups = useMaterialLookups(editable ? data.items.map((item) => item.material) : []);
@@ -1334,7 +1375,7 @@ function ScrapFormDialog({
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription>
             {form
-              ? `Criado em ${brDateTime(form.createdAt)}${form.status === "signed" && form.signedAt ? ` · assinado por todos em ${brDateTime(form.signedAt)}` : ""}${form.sentAt ? ` · enviado em ${brDateTime(form.sentAt)}` : ""}${ccNumber ? ` · incluído na baixa ${ccNumber}` : ""}`
+              ? `Criado em ${brDateTime(form.createdAt)}${form.status === "signed" && form.signedAt ? ` · assinado por todos em ${brDateTime(form.signedAt)}` : ""}${form.sentAt ? ` · enviado em ${brDateTime(form.sentAt)}` : ""}${ccNumber ? ` · incluído na baixa ${ccNumber}` : ""}${form.data.source ? ` · importado de "${form.data.source}"` : ""}`
               : "Preencha os itens. Descrição e classe vêm da BOM; o preço pode vir da MM60."}
           </DialogDescription>
         </DialogHeader>
@@ -1480,7 +1521,12 @@ function ScrapFormDialog({
           onReopen={reopen}
           onDelete={lifecycle.destroy}
           onClose={close}
-          onSave={() => run("save", saveDraft)}
+          onSave={() =>
+            run("save", async () => {
+              const saved = await saveDraft();
+              if (saved && saved.status !== "draft") setMessage({ kind: "ok", text: "Dados corrigidos. O PDF e as assinaturas continuam os mesmos." });
+            })
+          }
           onGenerate={generate}
         />
       </DialogContent>
@@ -1774,7 +1820,7 @@ function CcFormDialog({
     [sapDocument, setSapDocument] = useState(form?.data.sapDocument || ""),
     [picked, setPicked] = useState<Set<string>>(new Set()),
     [mm60, setMm60] = useState<Mm60 | null>(null);
-  const editable = canEdit && (!form || form.status === "draft");
+  const editable = canEdit && (!form || form.status === "draft" || isTranscription(form));
   const problems = useMemo(() => ccProblems(data), [data]);
   const history = useMemo(() => formHistory(scrapForms), [scrapForms]);
   const lookups = useMaterialLookups(editable ? data.items.map((item) => item.material) : []);
@@ -1914,7 +1960,7 @@ function CcFormDialog({
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription>
             {form
-              ? `FO.FI.C.007 · ${periodLabel(data.period)} · criado em ${brDateTime(form.createdAt)}${form.status === "signed" && form.signedAt ? ` · assinado por todos em ${brDateTime(form.signedAt)}` : ""}${form.sentAt ? ` · enviado em ${brDateTime(form.sentAt)}` : ""}`
+              ? `FO.FI.C.007 · ${periodLabel(data.period)} · criado em ${brDateTime(form.createdAt)}${form.status === "signed" && form.signedAt ? ` · assinado por todos em ${brDateTime(form.signedAt)}` : ""}${form.sentAt ? ` · enviado em ${brDateTime(form.sentAt)}` : ""}${form.data.source ? ` · importado de "${form.data.source}"` : ""}`
               : "Puxe os itens dos Scrap Forms assinados ou preencha à mão. Quantidade negativa = saída do estoque (baixa)."}
           </DialogDescription>
         </DialogHeader>
@@ -2119,7 +2165,12 @@ function CcFormDialog({
           onReopen={reopen}
           onDelete={lifecycle.destroy}
           onClose={close}
-          onSave={() => run("save", saveDraft)}
+          onSave={() =>
+            run("save", async () => {
+              const saved = await saveDraft();
+              if (saved && saved.status !== "draft") setMessage({ kind: "ok", text: "Dados corrigidos. O PDF e as assinaturas continuam os mesmos." });
+            })
+          }
           onGenerate={generate}
         />
       </DialogContent>
@@ -2296,8 +2347,11 @@ async function reviewUpload(kind: DocKind, form: AnyForm, name: string, bytes: U
   );
   for (const old of lost) blockers.push(`A assinatura de ${old.signer} (${old.slot ? slotById(old.slot).label : old.field}) não está neste arquivo: é uma cópia mais antiga. Anexe o PDF mais recente.`);
   // A página tem de ser a mesma emitida pelo portal (itens, valores, nomes) e, por cima, só campos de assinatura.
-  const generated = form.files.filter((file) => file.kind === "generated").at(-1);
-  if (!generated) warnings.push("Não há PDF emitido pelo portal para comparar o conteúdo.");
+  // Formulário importado: a página tem de ser a mesma do PDF original guardado na importação.
+  const imported = !form.files.some((file) => file.kind === "generated");
+  const generated = imported ? form.files[0] : form.files.filter((file) => file.kind === "generated").at(-1);
+  const origin = imported ? "do PDF importado" : "do PDF emitido pelo portal";
+  if (!generated) warnings.push("Não há PDF guardado para comparar o conteúdo.");
   else {
     const { compareWithGenerated } = await pdfTools();
     let comparison: Awaited<ReturnType<typeof compareWithGenerated>> | null = null;
@@ -2306,18 +2360,18 @@ async function reviewUpload(kind: DocKind, form: AnyForm, name: string, bytes: U
     } catch {
       comparison = null;
     }
-    if (!comparison) blockers.push("Não foi possível comparar este PDF com o emitido pelo portal. Tente de novo.");
+    if (!comparison) blockers.push(`Não foi possível comparar este PDF com o ${origin.slice(3)}. Tente de novo.`);
     else {
       if (!comparison.sameContent)
         blockers.push(
           comparison.pages !== 1
-            ? `O PDF tem ${comparison.pages} páginas: não é o formulário emitido pelo portal (que tem uma). Assinem o PDF baixado aqui.`
-            : "O conteúdo da página não é o mesmo do PDF emitido pelo portal (itens, valores ou nomes diferentes, ou PDF de outra versão). Assinem o PDF baixado aqui.",
+            ? `O PDF tem ${comparison.pages} páginas, diferente ${origin}. Assinem o PDF baixado aqui.`
+            : `O conteúdo da página não é o mesmo ${origin} (itens, valores ou nomes diferentes, ou PDF de outra versão). Assinem o PDF baixado aqui.`,
         );
       if (comparison.extraAnnotations.length)
         blockers.push(`Há desenhos ou textos colocados por cima do formulário (${comparison.extraAnnotations.join(", ")}). Só as assinaturas podem ser acrescentadas.`);
       warnings.push(...comparison.notes);
-      if (comparison.sameContent && !comparison.extraAnnotations.length) notes.push("Itens, valores e nomes são os mesmos do PDF emitido pelo portal.");
+      if (comparison.sameContent && !comparison.extraAnnotations.length) notes.push(`Itens, valores e nomes são os mesmos ${origin}.`);
     }
   }
   const after = signatureProgress(form.data, reading.signatures, kind);
@@ -2485,7 +2539,7 @@ function PdfCheckDialog({ open, onClose }: { open: boolean; onClose: () => void 
     setResult(null);
     try {
       const { readScrapPdf } = await pdfTools();
-      setResult({ name: file.name, reading: await readScrapPdf(new Uint8Array(await file.arrayBuffer()), { maxBytes: 30_000_000 }) });
+      setResult({ name: file.name, reading: await readScrapPdf(new Uint8Array(await file.arrayBuffer()), { maxBytes: 30_000_000, legacy: true }) });
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -2537,5 +2591,217 @@ function PdfCheckDialog({ open, onClose }: { open: boolean; onClose: () => void 
         </div>
       </DialogContent>
     </Dialog>
+  );
+}
+
+/* ------------------------------------------------------------------------ */
+/* Importar os formulários que já existiam (PDF do Excel assinado no Adobe)  */
+/* ------------------------------------------------------------------------ */
+
+type ImportRow = {
+  key: string;
+  file: File;
+  bytes: Uint8Array;
+  legacy: LegacyDocument;
+  reading: ScrapPdfReading | null;
+  blockers: string[];
+  selected: boolean;
+  state: "ready" | "saving" | "done" | "failed";
+  result: string;
+};
+
+async function prepareImport(file: File, existing: Map<string, string>, forced?: DocKind): Promise<ImportRow> {
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  const [{ readLegacyPdf }, { readScrapPdf }] = await Promise.all([import("@/lib/legacy-import"), pdfTools()]);
+  const blockers: string[] = [];
+  let legacy: LegacyDocument;
+  try {
+    legacy = await readLegacyPdf(bytes, file.name, forced);
+  } catch {
+    // Sem o texto: os dados ficam vazios e o tipo é o escolhido.
+    legacy = { kind: null, notes: ["Não consegui ler o texto deste PDF."], hasText: false };
+  }
+  let reading: ScrapPdfReading | null = null;
+  try {
+    reading = await readScrapPdf(bytes, { maxBytes: 30_000_000, legacy: true, kind: legacy.kind || undefined });
+  } catch (e) {
+    blockers.push((e as Error).message);
+  }
+  if (reading?.formNumber) blockers.push(`É um PDF emitido pelo portal (${reading.formNumber}): anexe-o dentro do próprio formulário.`);
+  const repeated = reading ? existing.get(reading.sha256) : undefined;
+  if (repeated) blockers.push(`Já está no portal (${repeated}).`);
+  if (!legacy.kind) blockers.push("Escolha se é Scrap Form ou FO.FI.C.007.");
+  if (reading?.signatures.length && bytes.length > MAX_PDF_BYTES) blockers.push("O PDF passa de 1,5 MB e não cabe no portal.");
+  return { key: `${file.name}:${file.size}:${file.lastModified}`, file, bytes, legacy, reading, blockers, selected: !blockers.length, state: "ready", result: "" };
+}
+const importDate = (row: ImportRow) => (row.legacy.kind === "scrap" ? row.legacy.data.formDate : row.legacy.kind === "cc" ? `${row.legacy.data.period}-01` : "9999");
+
+function ImportDialog({ existing, onImported, onClose }: { existing: AnyForm[]; onImported: () => void; onClose: () => void }) {
+  const [rows, setRows] = useState<ImportRow[]>([]),
+    [reading, setReading] = useState(""),
+    [saving, setSaving] = useState(false),
+    [summary, setSummary] = useState("");
+  const input = useRef<HTMLInputElement>(null);
+  const known = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const form of existing) for (const file of form.files) map.set(file.sha256, form.number);
+    return map;
+  }, [existing]);
+  const update = (key: string, patch: Partial<ImportRow>) => setRows((current) => current.map((row) => (row.key === key ? { ...row, ...patch } : row)));
+
+  async function add(files: File[]) {
+    const pdfs = files.filter((file) => /\.pdf$/i.test(file.name) || file.type === "application/pdf");
+    const fresh = pdfs.filter((file) => !rows.some((row) => row.key === `${file.name}:${file.size}:${file.lastModified}`));
+    const read: ImportRow[] = [];
+    for (let i = 0; i < fresh.length; i++) {
+      setReading(`Lendo ${i + 1} de ${fresh.length}: ${fresh[i].name}`);
+      const row = await prepareImport(fresh[i], known);
+      // O mesmo arquivo escolhido duas vezes (nomes diferentes).
+      const twin = [...rows, ...read].find((other) => other.reading && row.reading && other.reading.sha256 === row.reading.sha256);
+      if (twin) {
+        row.blockers.push(`É o mesmo arquivo de "${twin.file.name}".`);
+        row.selected = false;
+      }
+      read.push(row);
+    }
+    setReading("");
+    setRows((current) => [...current, ...read].sort((a, b) => importDate(a).localeCompare(importDate(b))));
+    if (input.current) input.current.value = "";
+  }
+  async function changeKind(row: ImportRow, kind: DocKind) {
+    const next = await prepareImport(row.file, known, kind);
+    setRows((current) => current.map((entry) => (entry.key === row.key ? next : entry)));
+  }
+  async function importAll() {
+    const queue = rows.filter((row) => row.selected && !row.blockers.length && row.state !== "done").sort((a, b) => importDate(a).localeCompare(importDate(b)));
+    setSaving(true);
+    setSummary("");
+    let done = 0,
+      failed = 0;
+    for (const row of queue) {
+      if (!row.legacy.kind) continue;
+      update(row.key, { state: "saving" });
+      try {
+        const signatures = row.reading?.signatures || [];
+        const body = signatures.length ? { action: "import", name: row.file.name, data: row.legacy.data, pdf: toBase64(row.bytes), signatures } : { action: "create", data: row.legacy.data };
+        const { form } = await api<AnyForm>(body, row.legacy.kind);
+        update(row.key, { state: "done", result: form.number, selected: false });
+        done++;
+      } catch (e) {
+        update(row.key, { state: "failed", result: (e as Error).message });
+        failed++;
+      }
+    }
+    setSaving(false);
+    setSummary(`${done} formulário(s) cadastrado(s)${failed ? `; ${failed} com erro (veja na lista)` : ""}.`);
+    if (done) onImported();
+  }
+
+  const ready = rows.filter((row) => row.selected && !row.blockers.length && row.state !== "done");
+  return (
+    <Dialog open onOpenChange={(open) => !open && !saving && onClose()}>
+      <DialogContent className="scrap-dialog import-dialog">
+        <DialogHeader>
+          <DialogTitle>Importar PDFs existentes</DialogTitle>
+          <DialogDescription>
+            Escolha os Scrap Forms e FO.FI.C.007 que já existem (do Excel, assinados no Adobe). O portal lê os itens e as assinaturas de cada PDF,
+            dá um número e guarda o PDF original. PDF sem nenhuma assinatura entra como rascunho, para gerar o PDF do portal.
+          </DialogDescription>
+        </DialogHeader>
+        <label className={`scrap-check-file${saving ? " disabled" : ""}`}>
+          <Upload size={18} />
+          {reading || (rows.length ? "Escolher mais PDFs" : "Escolher PDFs")}
+          <input ref={input} type="file" multiple accept="application/pdf,.pdf" aria-label="PDFs para importar" disabled={saving || !!reading} onChange={(e) => e.target.files && add(Array.from(e.target.files))} />
+        </label>
+        {rows.length > 0 && (
+          <ul className="import-list" aria-label="PDFs escolhidos">
+            {rows.map((row) => (
+              <ImportRowView key={row.key} row={row} disabled={saving} onToggle={(selected) => update(row.key, { selected })} onKind={(kind) => changeKind(row, kind)} />
+            ))}
+          </ul>
+        )}
+        {summary && (
+          <p className="scrap-review-note" role="status">
+            <CheckCircle2 size={14} />
+            {summary}
+          </p>
+        )}
+        <div className="dialog-actions scrap-footer">
+          <button disabled={saving} onClick={onClose}>
+            Fechar
+          </button>
+          <button className="primary" disabled={saving || !!reading || !ready.length} onClick={importAll}>
+            <Upload size={16} />
+            {saving ? "Importando…" : `Importar ${ready.length} formulário(s)`}
+          </button>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function ImportRowView({ row, disabled, onToggle, onKind }: { row: ImportRow; disabled: boolean; onToggle: (selected: boolean) => void; onKind: (kind: DocKind) => void }) {
+  const { legacy, reading } = row;
+  // Na ordem dos quadros (Produção → Financeiro / Solicitante → Financeiro); campo fora dos quadros no fim.
+  const order = (slot: ScrapSignature["slot"]) => (slot ? [...SLOTS, ...CC_SLOTS].findIndex((entry) => entry.id === slot) : 99);
+  const signatures = [...(reading?.signatures || [])].sort((a, b) => order(a.slot) - order(b.slot));
+  const kind = legacy.kind;
+  const progress = kind && legacy.kind ? signatureProgress(legacy.data, signatures, kind) : null;
+  let summary = "";
+  if (legacy.kind === "scrap") {
+    const first = legacy.data.items[0];
+    summary = `${brDate(legacy.data.formDate)} · ${legacy.data.items.length} item(s) · ${brMoney(formTotal(legacy.data))}${first ? ` · ${first.material} ${first.name}` : ""}`;
+  } else if (legacy.kind === "cc") {
+    const first = legacy.data.items[0];
+    summary = `${periodLabel(legacy.data.period)} · ${legacy.data.items.length} item(s) · ${brMoney(ccTotals(legacy.data).cost)}${first ? ` · ${first.material} ${first.description}` : ""}`;
+  }
+  const outcome = !signatures.length
+    ? "Sem assinatura: entra como rascunho"
+    : progress?.complete
+      ? "Entra como Assinado"
+      : `Entra aguardando: falta ${progress?.missing.map((entry) => entry.slot.label).join(", ")}`;
+  const warnings = [...legacy.notes, ...(progress?.issues || [])];
+  return (
+    <li className={`import-row ${row.state}${row.blockers.length ? " blocked" : ""}`}>
+      <div className="import-row-head">
+        <label className="import-pick">
+          <input type="checkbox" checked={row.selected} disabled={disabled || !!row.blockers.length || row.state === "done"} onChange={(e) => onToggle(e.target.checked)} aria-label={`Importar ${row.file.name}`} />
+          <b>{row.file.name}</b>
+        </label>
+        <select value={kind || ""} disabled={disabled || row.state === "done"} aria-label={`Tipo de ${row.file.name}`} onChange={(e) => e.target.value && onKind(e.target.value as DocKind)}>
+          <option value="">Tipo…</option>
+          <option value="scrap">Scrap Form</option>
+          <option value="cc">FO.FI.C.007</option>
+        </select>
+        {row.state === "done" && <i className="scrap-status signed">{row.result}</i>}
+        {row.state === "saving" && <i className="scrap-status signing">Importando…</i>}
+      </div>
+      {summary && <span className="import-summary">{summary}</span>}
+      {signatures.length > 0 && (
+        <span className="import-signatures">
+          {signatures.map((signature, index) => (
+            <i key={index} className={signature.check}>
+              {signature.slot ? slotById(signature.slot).label : "fora dos quadros"}: {signature.signer || "sem nome"}
+              {signature.check === "valid" ? " ✓" : signature.check === "invalid" ? " ✗" : " ?"}
+            </i>
+          ))}
+        </span>
+      )}
+      {!row.blockers.length && row.state !== "done" && <span className="import-outcome">{outcome}</span>}
+      {row.state === "failed" && <p className="scrap-review-block">{row.result}</p>}
+      {row.blockers.map((text) => (
+        <p key={text} className="scrap-review-block">
+          <XCircle size={13} />
+          {text}
+        </p>
+      ))}
+      {row.state !== "done" &&
+        warnings.map((text) => (
+          <p key={text} className="scrap-review-warn">
+            <TriangleAlert size={13} />
+            {text}
+          </p>
+        ))}
+    </li>
   );
 }

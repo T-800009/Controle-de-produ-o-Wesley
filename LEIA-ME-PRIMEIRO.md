@@ -1,4 +1,28 @@
-# MB51-64 — Baixa em CC (FO.FI.C.007) no portal
+# MB51-65 — Importar os formulários que já existem
+
+Nas duas abas (Scrap Forms e Baixa em CC) há o botão **Importar PDFs existentes**. Ele cadastra os Scrap Forms e FO.FI.C.007 feitos antes do portal: PDF do Excel, assinado no Adobe.
+
+1. Escolha vários PDFs de uma vez. Para cada um, o portal lê no próprio navegador:
+   - o **tipo**: Scrap Form ou FO.FI.C.007. Dá para trocar na lista;
+   - os **itens**: data, P/N, quantidade, descrição, defeito, causa, VIN, OP, preço e classe; no FO.FI.C.007, company/plant/WH, quantidade com sinal, custo e centro de custo;
+   - a **data do formulário** e os **nomes** impressos no quadro de aprovação;
+   - as **assinaturas**. Nos PDFs antigos os campos se chamam "Signature2…": cada um vale pela posição na linha de assinaturas (Produção, Qualidade, Logística, Financeiro, da esquerda para a direita) ou, no FO.FI.C.007, de cima para baixo (Solicitante, Gestor, SCM, Financeiro). O campo **Assinatura_Financeiro** já existente fica no quadro do Financeiro.
+2. A lista mostra como cada um vai entrar. Por exemplo:
+   - "Entra aguardando: falta Financeiro";
+   - "Sem assinatura: entra como rascunho";
+   - avisos de assinatura inválida, ID autoassinado ou PDF escaneado (sem texto).
+3. **Importar**. Os formulários ganham número do portal em ordem de data (SCRAP-2026-0001…, CC-2026-0001…).
+   - O PDF original fica guardado como versão 1, sem nenhuma alteração.
+   - PDF sem nenhuma assinatura vira **rascunho**: o portal gera o PDF dele para assinar.
+   - O mesmo PDF não entra duas vezes.
+   - PDF assinado acima de 1,5 MB não cabe no portal e aparece bloqueado.
+4. **Depois de importado:**
+   - Os dados são só a transcrição do PDF e podem ser corrigidos com **Salvar dados**, sem mexer nas assinaturas. Use isso para preencher os itens de um PDF escaneado ou corrigir algo que a leitura errou.
+   - Quando a Rosy assinar, anexe o PDF com **Anexar PDF assinado**, como num formulário do portal. A conferência compara a página com o PDF importado.
+
+---
+
+## Histórico da MB51-64 — Baixa em CC (FO.FI.C.007) no portal
 
 A aba **SCRAP FORM** agora tem dois documentos, cada um com sua lista: **Scrap Forms** e **Baixa em CC · FO.FI.C.007**. O portal guarda e cria os PDFs dos dois. A aba BAIXA CC da planilha continua no Google Sheets e o portal não a lê.
 

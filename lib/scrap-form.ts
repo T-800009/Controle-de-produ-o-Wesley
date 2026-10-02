@@ -79,6 +79,8 @@ export type ScrapFormData = {
   prDate: string;
   po: string;
   notes: string;
+  /** Formulário que já existia (importado): nome do PDF original. Os dados são a transcrição dele. */
+  source?: string;
 };
 /** valid: conferida (conteúdo e criptografia). invalid: não confere. unchecked: não deu para conferir. */
 export type SignatureCheck = "valid" | "invalid" | "unchecked";
@@ -222,8 +224,15 @@ export function sanitizeFormData(input: unknown): ScrapFormData {
     prDate: isIsoDate(raw.prDate) ? raw.prDate : "",
     po: text(raw.po, 30),
     notes: text(raw.notes, 500),
+    ...(raw.source ? { source: text(raw.source, 160) } : {}),
   };
 }
+
+/**
+ * Formulário importado cujo PDF não foi emitido pelo portal: os dados são só a
+ * transcrição do PDF assinado e podem ser corrigidos sem mexer nas assinaturas.
+ */
+export const isTranscription = (form: { data: { source?: string }; files: { kind: string }[] }) => !!form.data.source && !form.files.some((file) => file.kind === "generated");
 
 export const cents = (value: number) => Math.round(value * 100) / 100;
 export function itemTotal(item: Pick<ScrapItem, "quantity" | "unitPrice">) {

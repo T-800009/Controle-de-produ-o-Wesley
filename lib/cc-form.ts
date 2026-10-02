@@ -47,6 +47,8 @@ export type CcFormData = {
   scrapForms: string[];
   sapDocument: string;
   notes: string;
+  /** FO.FI.C.007 que já existia (importado): nome do PDF original. */
+  source?: string;
 };
 export type CcForm = Omit<ScrapForm, "data"> & { data: CcFormData };
 
@@ -127,6 +129,7 @@ export function sanitizeCcData(input: unknown): CcFormData {
     scrapForms: scrapForms as string[],
     sapDocument: text(raw.sapDocument, 40),
     notes: text(raw.notes, 500),
+    ...(raw.source ? { source: text(raw.source, 160) } : {}),
   };
 }
 

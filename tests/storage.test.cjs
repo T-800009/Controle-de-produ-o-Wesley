@@ -333,6 +333,53 @@ console.log('Observações Ana: compartilhamento, isolamento OP/material, perfil
  assert.equal((await (await cc({action:'create',data:ccData})).json()).form.number,`CC-${year}-0002`,'Número apagado não volta a ser usado');
  assert.equal((await (await scrap({action:'create',data})).json()).form.number,`SCRAP-${year}-0004`,'A baixa não consome número de Scrap Form');
  console.log('FO.FI.C.007: numeração CC-…, listas separadas, quatro assinaturas obrigatórias, Doc SAP, reabertura e exclusão passaram.');
+ // MB51-65 · Formulários que já existiam (Excel → PDF assinado): número do portal, PDF original guardado, transcrição corrigível.
+ {
+  const legacy=fs.readFileSync(path.join(root,'tests/fixtures/legado/legado-scrap-assinado.pdf'));
+  const legacyItem={date:'2026-09-22',material:'11272431-00',quantity:2,name:'UNID DE CONTROLE ELETR EBS 5S',defect:'Apresentou fuga de tensão durante a depuração',cause:'A',vin:'901',op:'19000002701',unitPrice:1233.89,classification:'B'};
+  const legacyData={formDate:'2026-09-22',items:[legacyItem],approvers:{production:'Pessoa Producao',quality:'Pessoa Qualidade',logistics:'Pessoa Logistica',finance:'Pessoa Financeiro'},costCenter:'',sapDocument:'',notes:'',source:'ignorado'};
+  const three=[sig('production','Signature3','Pessoa Producao'),sig('quality','Signature4','Pessoa Qualidade'),{...sig('logistics','Signature2','Pessoa Logistica'),coversWholeFile:true}];
+  const importOne=(body,customHeaders,env)=>scrap({action:'import',name:'Formulario de SCRAP A-B 22.09.2026 falta Rosy.pdf',data:legacyData,pdf:b64(legacy),signatures:three,...body},customHeaders,env);
+  assert.equal((await importOne({},viewerHeaders,viewerEnv)).status,403,'Consulta não importa');
+  assert.equal((await importOne({signatures:[]})).status,400,'PDF sem assinatura vira rascunho, não importação');
+  assert.equal((await importOne({pdf:b64(Buffer.from('não é pdf'))})).status,400);
+  assert.equal((await importOne({pdf:b64(Buffer.concat([legacy,Buffer.alloc(1_600_000,32)]))})).status,413,'Acima de 1,5 MB não cabe');
+  assert.equal((await importOne({signatures:[...three,sig('finance','Assinatura_Financeiro','Pessoa Financeiro')]})).status,400,'Mais assinaturas conferidas do que /ByteRange no arquivo');
+  let imported=(await (await importOne({})).json()).form;
+  assert.match(imported.number,new RegExp(`^SCRAP-${year}-\\d{4}$`));
+  assert.equal(imported.status,'signing','Falta o Financeiro (item classe B)');
+  assert.equal(imported.data.source,'Formulario de SCRAP A-B 22.09.2026 falta Rosy.pdf','Origem é o nome do PDF, não o que veio nos dados');
+  assert.equal(imported.files.length,1);assert.equal(imported.files[0].kind,'signed');assert.equal(imported.fileVersion,1);
+  assert.deepEqual(Buffer.from(await (await call(`/api/scrap-forms?file=${imported.id}&version=1`,{headers:viewerHeaders},viewerEnv)).arrayBuffer()),legacy);
+  const again=await importOne({});
+  assert.equal(again.status,409);assert.match((await again.json()).error,new RegExp(`já está no portal \\(${imported.number}\\)`),'O mesmo PDF não entra duas vezes');
+  assert.equal((await scrap({action:'import',doc:'cc',name:'x.pdf',data:{period:'2026-09',items:[]},pdf:b64(legacy),signatures:three})).status,409,'Nem como outro tipo de formulário');
+  // Transcrição: corrigir os dados não mexe nas assinaturas; a situação é recalculada.
+  imported=(await (await scrap({action:'update',id:imported.id,revision:imported.revision,data:{...legacyData,items:[{...legacyItem,classification:'C',name:'Corrigido'}],source:'outro.pdf'}})).json()).form;
+  assert.equal(imported.data.items[0].name,'Corrigido');assert.equal(imported.data.source,'Formulario de SCRAP A-B 22.09.2026 falta Rosy.pdf');
+  assert.equal(imported.status,'signed','Classe C: o Financeiro deixa de ser exigido');assert.ok(imported.signedAt);assert.equal(imported.signatures.length,3);
+  imported=(await (await scrap({action:'update',id:imported.id,revision:imported.revision,data:legacyData})).json()).form;
+  assert.equal(imported.status,'signing');assert.equal(imported.signedAt,null);
+  // O PDF devolvido com a assinatura do Financeiro entra como nova versão.
+  const complete=fs.readFileSync(path.join(root,'tests/fixtures/legado/legado-scrap-completo.pdf'));
+  imported=(await (await scrap({action:'upload',id:imported.id,revision:imported.revision,kind:'signed',name:'completo.pdf',pdf:b64(complete),signatures:[...three.map(entry=>({...entry,coversWholeFile:false})),{...sig('finance','Assinatura_Financeiro','Pessoa Financeiro'),coversWholeFile:true}]})).json()).form;
+  assert.equal(imported.status,'signed');assert.equal(imported.files.length,2);
+  // Criar à mão não aceita "source".
+  const manual=(await (await scrap({action:'create',data:{...data,source:'falso.pdf'}})).json()).form;
+  assert.equal(manual.data.source,undefined);
+  assert.equal((await scrap({action:'update',id:manual.id,revision:manual.revision,data})).status,200);
+  // Depois de reaberto e emitido pelo portal, deixa de ser transcrição.
+  const reopened=(await (await scrap({action:'reopen',id:imported.id,revision:imported.revision},adminJson,environment)).json()).form;
+  const portalPdf=await buildScrapPdf({number:reopened.number,data:reopened.data});
+  const issued=(await (await scrap({action:'upload',id:reopened.id,revision:reopened.revision,kind:'generated',name:'novo.pdf',pdf:b64(portalPdf)})).json()).form;
+  assert.equal(issued.status,'signing');
+  assert.equal((await scrap({action:'update',id:issued.id,revision:issued.revision,data:legacyData})).status,409,'Emitido pelo portal: só reabrindo');
+  // FO.FI.C.007 antigo.
+  const legacyCc=fs.readFileSync(path.join(root,'tests/fixtures/legado/legado-cc-assinado.pdf'));
+  const ccImported=(await (await scrap({action:'import',doc:'cc',name:'Ajuste Inventario Agosto 2026.pdf',data:{...ccData,period:'2026-08'},pdf:b64(legacyCc),signatures:[sig('requester','Signature1','Pessoa Solicitante'),{...sig('manager','Signature2','Pessoa Gestor'),coversWholeFile:true}]})).json()).form;
+  assert.match(ccImported.number,new RegExp(`^CC-${year}-\\d{4}$`));assert.equal(ccImported.status,'signing');assert.equal(ccImported.data.source,'Ajuste Inventario Agosto 2026.pdf');
+  console.log('Importação de formulários antigos: número, PDF original, duplicado, transcrição corrigível, assinatura nova e FO.FI.C.007 passaram.');
+ }
 }
 console.log('Status das OPs: três cores persistidas, isolamento por BOM, concorrência, leitura compartilhada e bloqueio de consulta passaram.');
 assert.equal((await call('/api/data?id=1500',{}, {...environment,REQUIRE_PASSWORD:undefined,PORTAL_PASSWORD:undefined})).status,200);

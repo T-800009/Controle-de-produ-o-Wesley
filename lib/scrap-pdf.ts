@@ -20,6 +20,7 @@ import { CC_TITLE, MAX_CC_ITEMS, ccItemTotal, ccTotals, periodLabel, type CcForm
 import {
   CAUSES,
   CC_SLOTS,
+  type DocKind,
   MAX_ITEMS,
   MAX_PDF_BYTES,
   SLOTS,
@@ -555,6 +556,57 @@ export function slotFromPosition(center: { x: number; y: number; page: number },
   return boxes.find((box) => center.x >= box.x1 && center.x <= box.x2 && center.y >= box.y1 && center.y <= box.y2)?.slot || null;
 }
 
+const SCRAP_ORDER: SlotId[] = ["production", "quality", "logistics", "finance"];
+const CC_ORDER: SlotId[] = ["requester", "manager", "scm", "finance"];
+type Placed = { slot: SlotId | null; center: { x: number; y: number; page: number } | null };
+type PageBox = { x: number; y: number; width: number; height: number };
+/**
+ * Formulário antigo (feito no Excel, sem os quadros gravados pelo portal): os
+ * campos criados no Adobe ("Signature2"…) valem pela ordem na linha de
+ * assinaturas — Scrap Form da esquerda para a direita (Produção, Qualidade,
+ * Logística, Financeiro), FO.FI.C.007 de cima para baixo (Solicitante, Gestor,
+ * SCM, Financeiro). Campo com nome do portal (Assinatura_…) fica no próprio
+ * quadro e serve de referência; campo fora da página ou fora da linha não vale.
+ */
+export function legacySlots(placed: Placed[], box: PageBox, kind?: DocKind): (SlotId | null)[] {
+  const inPage = (entry: Placed) =>
+    !!entry.center && entry.center.page === 0 && entry.center.x >= box.x && entry.center.x <= box.x + box.width && entry.center.y >= box.y && entry.center.y <= box.y + box.height;
+  const visible = placed.filter(inPage);
+  let resolved = kind;
+  if (!resolved) {
+    if (placed.some((entry) => entry.slot && CC_ORDER.includes(entry.slot) && entry.slot !== "finance")) resolved = "cc";
+    else if (visible.length >= 2) {
+      const xs = visible.map((entry) => entry.center!.x),
+        ys = visible.map((entry) => entry.center!.y);
+      resolved = Math.max(...ys) - Math.min(...ys) > Math.max(...xs) - Math.min(...xs) ? "cc" : "scrap";
+    } else resolved = "scrap";
+  }
+  const order = resolved === "cc" ? CC_ORDER : SCRAP_ORDER;
+  const along = (entry: Placed) => (resolved === "cc" ? -entry.center!.y : entry.center!.x);
+  const across = (entry: Placed) => (resolved === "cc" ? entry.center!.x : entry.center!.y);
+  const tolerance = (resolved === "cc" ? box.width : box.height) * 0.1;
+  const middle = visible.map(across).sort((a, b) => a - b)[Math.floor(visible.length / 2)] ?? 0;
+  const inRow = (entry: Placed) => inPage(entry) && Math.abs(across(entry) - middle) <= tolerance;
+  const result = placed.map((entry) => entry.slot);
+  const taken = new Set(placed.map((entry) => entry.slot).filter((slot): slot is SlotId => !!slot && order.includes(slot)));
+  let pointer = 0;
+  const sequence = placed.map((entry, index) => ({ entry, index })).filter(({ entry }) => inRow(entry) && (!entry.slot || order.includes(entry.slot)));
+  sequence.sort((a, b) => along(a.entry) - along(b.entry));
+  for (const { entry, index } of sequence) {
+    if (entry.slot) {
+      pointer = Math.max(pointer, order.indexOf(entry.slot) + 1);
+      continue;
+    }
+    let next = pointer;
+    while (next < order.length && taken.has(order[next])) next++;
+    if (next >= order.length) continue;
+    result[index] = order[next];
+    taken.add(order[next]);
+    pointer = next + 1;
+  }
+  return result;
+}
+
 type FieldEntry = { name: string; dict: PDFDict; widgets: PDFDict[] };
 function collectFields(doc: PDFDocument): FieldEntry[] {
   const acro = doc.catalog.lookup(PDFName.of("AcroForm"));
@@ -622,8 +674,11 @@ function gapMatches(bytes: Uint8Array, b: number, c: number, contents: Uint8Arra
   return true;
 }
 
-/** maxBytes: limite para guardar no portal; a conferência local ("Conferir um PDF") aceita arquivos maiores. */
-export async function readScrapPdf(bytes: Uint8Array, { maxBytes = MAX_PDF_BYTES } = {}): Promise<ScrapPdfReading> {
+/**
+ * maxBytes: limite para guardar no portal; a conferência local ("Conferir um PDF") aceita arquivos maiores.
+ * legacy: PDF antigo, sem os quadros do portal — os campos valem pela posição na linha de assinaturas (legacySlots).
+ */
+export async function readScrapPdf(bytes: Uint8Array, { maxBytes = MAX_PDF_BYTES, legacy = false, kind }: { maxBytes?: number; legacy?: boolean; kind?: DocKind } = {}): Promise<ScrapPdfReading> {
   if (bytes.length > 30_000_000) throw Error("O PDF passa de 30 MB.");
   if (bytes.length > maxBytes) throw Error("O PDF passa de 1,5 MB. O formulário gerado pelo portal fica bem abaixo disso: confira se é o arquivo certo (não regrave o PDF assinado em outro programa, isso invalida as assinaturas).");
   const head = new TextDecoder("latin1").decode(bytes.subarray(0, 1024));
@@ -643,9 +698,15 @@ export async function readScrapPdf(bytes: Uint8Array, { maxBytes = MAX_PDF_BYTES
   const fields: SignatureField[] = [];
   const signatures: ScrapSignature[] = [];
   const seenRanges = new Map<string, string>();
-  for (const entry of collectFields(doc)) {
+  const entries = collectFields(doc).map((entry) => {
     const center = widgetCenter(doc, entry.widgets);
-    const slot = slotFromFieldName(entry.name) || (center ? slotFromPosition(center, boxes) : null);
+    return { entry, center, slot: slotFromFieldName(entry.name) || (center ? slotFromPosition(center, boxes) : null) };
+  });
+  if (legacy && !boxes.length) {
+    const page = doc.getPage(0).getMediaBox();
+    legacySlots(entries, page, kind).forEach((slot, index) => (entries[index].slot = slot));
+  }
+  for (const { entry, slot } of entries) {
     const value = entry.dict.lookup(PDFName.of("V"));
     if (!(value instanceof PDFDict)) {
       fields.push({ name: entry.name, slot, signed: false });

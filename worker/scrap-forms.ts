@@ -1,7 +1,7 @@
 import type {PortalDatabase} from './database';
 import type {PortalRole} from './auth';
 import {initial,ensureSchema} from './storage';
-import {MAX_PDF_BYTES,isIsoDate,sanitizeFormData,sanitizeSignatures,statusFromSignatures,type DocKind,type ScrapFileMeta,type ScrapForm,type ScrapSignature,type ScrapStatus} from '../lib/scrap-form';
+import {MAX_PDF_BYTES,isIsoDate,isTranscription,sanitizeFormData,sanitizeSignatures,statusFromSignatures,type DocKind,type ScrapFileMeta,type ScrapForm,type ScrapSignature,type ScrapStatus} from '../lib/scrap-form';
 import {sanitizeCcData,type CcForm} from '../lib/cc-form';
 
 /**
@@ -90,7 +90,8 @@ export function brazilYear(now:Date){
 export async function createScrapForm(db:PortalDatabase,input:unknown,role:PortalRole,now=new Date(),kind:DocKind='scrap'){
  await scrapSchema(db);
  const {forms,counters,prefix,sanitize}=KINDS[kind];
- const data=valid(()=>(sanitize as (input:unknown)=>unknown)(input));
+ // "source" só vem da importação de um PDF assinado.
+ const data=valid(()=>(sanitize as (input:unknown)=>unknown)(input&&typeof input==='object'?{...(input as object),source:undefined}:input));
  const year=brazilYear(now),stamp=now.toISOString(),id=crypto.randomUUID();
  // Numeração sequencial por ano numa transação: contador (iniciado pelo maior número já usado) + formulário.
  await db.batch([
@@ -102,10 +103,52 @@ export async function createScrapForm(db:PortalDatabase,input:unknown,role:Porta
 export async function updateScrapDraft(db:PortalDatabase,id:unknown,revision:unknown,input:unknown,kind:DocKind='scrap'){
  await scrapSchema(db);
  const form=await current(db,id,revision,kind);
- if(form.status!=='draft')throw new ScrapError('Este formulário já foi emitido para assinatura. Use Reabrir para corrigir.',409);
- const data=valid(()=>(KINDS[kind].sanitize as (input:unknown)=>unknown)(input));
- changed(await db.prepare(`UPDATE ${KINDS[kind].forms} SET data=?,revision=revision+1,updated_at=? WHERE id=? AND revision=? AND status='draft'`).bind(JSON.stringify(data),new Date().toISOString(),form.id,form.revision).run());
+ // Formulário importado: os dados são a transcrição do PDF assinado e podem ser corrigidos.
+ const transcription=isTranscription(form);
+ if(form.status!=='draft'&&!transcription)throw new ScrapError('Este formulário já foi emitido para assinatura. Use Reabrir para corrigir.',409);
+ const source=(form.data as {source?:string}).source;
+ const raw=input&&typeof input==='object'?{...(input as object),source}:input;
+ const data=valid(()=>(KINDS[kind].sanitize as (input:unknown)=>any)(raw));
+ const now=new Date().toISOString();
+ const status:ScrapStatus=form.status==='draft'?'draft':statusFromSignatures(data,form.signatures,kind);
+ const signedAt=status==='signed'?form.signedAt||now:null;
+ changed(await db.prepare(`UPDATE ${KINDS[kind].forms} SET data=?,status=?,signed_at=?,revision=revision+1,updated_at=? WHERE id=? AND revision=? AND status=?`).bind(JSON.stringify(data),status,signedAt,now,form.id,form.revision,form.status).run());
  return (await getScrapForm(db,form.id,kind))!;
+}
+/**
+ * Formulário que já existia (Excel → PDF assinado no Adobe): ganha número do
+ * portal e o PDF original fica guardado como versão 1. A situação sai das
+ * assinaturas conferidas no navegador, com a mesma regra do upload.
+ * PDF sem nenhuma assinatura não é importado aqui: vira rascunho (create).
+ */
+export async function importScrapForm(db:PortalDatabase,payload:{data?:unknown;name?:unknown;pdf?:unknown;signatures?:unknown},role:PortalRole,kind:DocKind='scrap',now=new Date()){
+ await scrapSchema(db);
+ const {forms,counters,prefix,sanitize}=KINDS[kind];
+ if(typeof payload.pdf!=='string')throw new ScrapError('Envie o PDF.');
+ if(payload.pdf.length>Math.ceil(MAX_PDF_BYTES/3)*4+8)throw new ScrapError('O PDF passa de 1,5 MB e não cabe no portal.',413);
+ const {clean,bytes}=decodeBase64(payload.pdf);
+ if(bytes.length>MAX_PDF_BYTES)throw new ScrapError('O PDF passa de 1,5 MB e não cabe no portal.',413);
+ if(!countBytes(bytes.subarray(0,1024),'%PDF-'))throw new ScrapError('O arquivo enviado não é um PDF.');
+ const signatures=valid(()=>sanitizeSignatures(payload.signatures));
+ if(!signatures.length)throw new ScrapError('Este PDF não tem nenhuma assinatura digital: cadastre como rascunho.');
+ if(countBytes(bytes,'/ByteRange')<signatures.filter(signature=>signature.check==='valid').length)throw new ScrapError('O arquivo não tem as assinaturas informadas.');
+ const name=safeName(payload.name,'formulario-importado.pdf');
+ const data=valid(()=>(sanitize as (input:unknown)=>any)({...(payload.data&&typeof payload.data==='object'?payload.data:{}),source:name}));
+ const hash=await sha256(bytes);
+ const repeated=await db.prepare('SELECT COALESCE((SELECT number FROM scrap_forms WHERE id=f.form_id),(SELECT number FROM cc_forms WHERE id=f.form_id)) AS number FROM scrap_files f WHERE f.sha256=? AND f.part=0 LIMIT 1').bind(hash).first<{number:string|null}>();
+ if(repeated)throw new ScrapError(`Este PDF já está no portal${repeated.number?` (${repeated.number})`:''}.`,409);
+ const status=statusFromSignatures(data,signatures,kind);
+ const stamp=now.toISOString(),id=crypto.randomUUID(),year=brazilYear(now);
+ const latest=signatures.filter(signature=>signature.check==='valid').map(signature=>signature.signedAt||'').sort().at(-1);
+ const signedAt=status==='signed'?latest||stamp:null;
+ const statements=[
+  db.prepare(`INSERT INTO ${counters}(year,seq) VALUES(?,(SELECT COALESCE(MAX(seq),0)+1 FROM ${forms} WHERE year=?)) ON CONFLICT(year) DO UPDATE SET seq=${counters}.seq+1`).bind(year,year),
+  db.prepare(`INSERT INTO ${forms}(id,number,year,seq,status,data,signatures,file_version,revision,created_by,created_at,updated_at,signed_at) SELECT ?,'${prefix}-'||?||'-'||CASE WHEN seq<10000 THEN substr('0000'||seq,-4) ELSE seq END,?,seq,?,?,?,1,1,?,?,?,? FROM ${counters} WHERE year=?`).bind(id,String(year),year,status,JSON.stringify(data),JSON.stringify(signatures),role,stamp,stamp,signedAt,year)
+ ];
+ for(let part=0;part*PART<clean.length;part++)
+  statements.push(db.prepare('INSERT INTO scrap_files(form_id,version,part,kind,name,size,sha256,data,created_at,created_by) VALUES(?,?,?,?,?,?,?,?,?,?)').bind(id,1,part,'signed',name,bytes.length,hash,clean.slice(part*PART,(part+1)*PART),stamp,role));
+ await db.batch(statements);
+ return (await getScrapForm(db,id,kind))!;
 }
 /** Volta para rascunho: as assinaturas coletadas deixam de valer; os PDFs antigos ficam no histórico. */
 export async function reopenScrapForm(db:PortalDatabase,id:unknown,revision:unknown,role:PortalRole='admin',kind:DocKind='scrap'){
@@ -166,10 +209,11 @@ function decodeBase64(value:string){
 }
 /** Quantas vezes um trecho de texto aparece nos bytes (sem converter o arquivo inteiro). */
 function countBytes(bytes:Uint8Array,text:string){
+ // indexOf (nativo) acha o primeiro byte: pouco tempo de CPU mesmo em PDF grande.
  const needle=Array.from(text,char=>char.charCodeAt(0));let count=0;
- outer:for(let i=0;i+needle.length<=bytes.length;i++){
-  for(let j=0;j<needle.length;j++)if(bytes[i+j]!==needle[j])continue outer;
-  count++;i+=needle.length-1;
+ for(let i=bytes.indexOf(needle[0]);i>=0&&i+needle.length<=bytes.length;i=bytes.indexOf(needle[0],i+1)){
+  let j=1;while(j<needle.length&&bytes[i+j]===needle[j])j++;
+  if(j===needle.length){count++;i+=needle.length-1;}
  }
  return count;
 }
