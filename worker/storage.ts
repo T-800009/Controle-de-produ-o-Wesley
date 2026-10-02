@@ -3,6 +3,7 @@ import seed from '../data/seed.json';
 import {type Dataset,validateRows} from '../lib/materials';
 import {stockModule} from '../lib/stock-modules';
 import {isOpStatus,type OpStatus,type OpStatuses} from '../lib/op-status';
+import {validatePlanRows,validPlanUnits} from '../lib/oebom';
 const ready=new WeakMap<PortalDatabase,Promise<void>>();
 export async function ensureSchema(db:PortalDatabase){
  let promise=ready.get(db);
@@ -146,6 +147,23 @@ export async function list(db:PortalDatabase){
  const {rows,...base}=seed.models[0];const map=new Map<string,any>([['consumo:bc22x-1268',{...base,id:'consumo:bc22x-1268',version:'seed'}]]);
  for(const r of result.results)map.set(r.id,{...JSON.parse(r.metadata),id:r.id,version:r.generation,updatedAt:r.updated_at});return [...map.values()];
 }
+/** BOMs do plano (OEBOM): só os metadados, sem as linhas. */
+export async function listPlans(db:PortalDatabase){
+ const result=await db.prepare('SELECT id,metadata,updated_at,generation FROM datasets WHERE id LIKE ?').bind('plano:%').all<any>();
+ return result.results.map(r=>({...JSON.parse(r.metadata),id:r.id,version:r.generation,updatedAt:r.updated_at})).sort((a,b)=>String(a.name).localeCompare(String(b.name)));
+}
+/** Muda só os ônibus restantes de uma BOM do plano, sem reenviar as linhas. */
+export async function updatePlanUnits(db:PortalDatabase,id:string,units:unknown){
+ if(!/^plano:[a-z0-9-]{1,120}$/.test(id))throw new DatasetRemovalError('BOM do plano inválida.',400);
+ if(!validPlanUnits(units))throw new DatasetRemovalError('Informe os ônibus restantes (número inteiro, 0 ou mais).',400);
+ const old=await db.prepare('SELECT generation,metadata FROM datasets WHERE id=?').bind(id).first<{generation:string;metadata:string}>();
+ if(!old)throw new DatasetRemovalError('BOM do plano não encontrada. Atualize a lista.',404);
+ let meta:Record<string,unknown>={};try{meta=JSON.parse(old.metadata);}catch{}
+ const now=new Date().toISOString();
+ const result=await db.prepare('UPDATE datasets SET metadata=?,updated_at=? WHERE id=? AND generation=?').bind(JSON.stringify({...meta,units}),now,id,old.generation).run();
+ if(!result.meta?.changes)throw new DatasetRemovalError('Esta BOM foi alterada durante a gravação. Recarregue a página.',409);
+ return {...meta,id,units,version:old.generation,updatedAt:now};
+}
 export async function read(db:PortalDatabase,id:string):Promise<Dataset|null>{
  // One SQL statement reads metadata and rows from the same committed generation.
  const result=await db.prepare('SELECT d.metadata,d.generation,d.updated_at,e.payload FROM datasets d LEFT JOIN entries e ON e.dataset=d.id AND e.generation=d.generation WHERE d.id=? ORDER BY CAST(e.id AS INTEGER)').bind(id).all<any>();
@@ -155,10 +173,15 @@ export async function read(db:PortalDatabase,id:string):Promise<Dataset|null>{
  return saved;
 }
 export async function save(db:PortalDatabase,d:Dataset){
- const kind=d.id?.startsWith('consumo:')?'consumo':d.id;
- if((kind!=='consumo'&&!stockModule(kind))||d.id.length>200||typeof d.name!=='string'||!d.name.trim()||d.name.length>200||!Array.isArray(d.rows))throw Error('Dados incompletos ou módulo inválido.');
- validateRows(d.rows,kind);
- const rows=d.rows,meta={id:d.id,name:d.name,revision:d.revision||'',ops:d.ops||[],source:d.source||'',reviewRequired:!!d.reviewRequired,sheetId:d.sheetId,sheetName:d.sheetName};
+ const kind=d.id?.startsWith('consumo:')?'consumo':d.id?.startsWith('plano:')?'plano':d.id;
+ if((kind!=='consumo'&&kind!=='plano'&&!stockModule(kind))||d.id.length>200||typeof d.name!=='string'||!d.name.trim()||d.name.length>200||!Array.isArray(d.rows))throw Error('Dados incompletos ou módulo inválido.');
+ if(kind==='plano'){
+  // BOM do plano (OEBOM): quantidade por ônibus × ônibus restantes, sem OPs.
+  if(!/^plano:[a-z0-9-]{1,120}$/.test(d.id))throw Error('Identificador da BOM do plano inválido.');
+  if(!validPlanUnits(d.units))throw Error('Informe os ônibus restantes (número inteiro, 0 ou mais).');
+  validatePlanRows(d.rows);
+ }else validateRows(d.rows,kind);
+ const rows=d.rows,meta={id:d.id,name:d.name,revision:d.revision||'',ops:kind==='plano'?[]:d.ops||[],source:d.source||'',reviewRequired:!!d.reviewRequired,sheetId:d.sheetId,sheetName:d.sheetName,...(kind==='plano'?{units:d.units,model:String(d.model||''),dwb:String(d.dwb||'')}:{})};
  const old=await db.prepare('SELECT generation FROM datasets WHERE id=?').bind(d.id).first<{generation:string}>();
  if((old?.generation??(initial(d.id)?'seed':'new'))!==(d.version??'new'))throw Error('Outra atualização foi salva. Atualize a página antes de importar novamente.');
  const generation=crypto.randomUUID(),now=new Date().toISOString();
@@ -182,7 +205,7 @@ export class DatasetRemovalError extends Error{constructor(message:string,readon
  * da Ana e o SAP não são alterados. A versão impede apagar uma BOM que outra
  * pessoa acabou de substituir. */
 export async function removeDataset(db:PortalDatabase,id:string,version:string){
- if(!/^consumo:.{1,190}$/.test(id))throw new DatasetRemovalError('Somente BOMs cadastradas podem ser apagadas.',400);
+ if(!/^consumo:.{1,190}$/.test(id)&&!/^plano:[a-z0-9-]{1,120}$/.test(id))throw new DatasetRemovalError('Somente BOMs cadastradas podem ser apagadas.',400);
  if(PROTECTED_BOMS.has(id))throw new DatasetRemovalError('A BOM de referência do pacote (BC22X OP1268) não pode ser apagada. Cadastre a revisão correta e use o seletor.',400);
  const old=await db.prepare('SELECT generation,metadata FROM datasets WHERE id=?').bind(id).first<{generation:string;metadata:string}>();
  if(!old)throw new DatasetRemovalError('BOM não encontrada. Ela pode ter sido apagada por outra pessoa; atualize a lista.',404);

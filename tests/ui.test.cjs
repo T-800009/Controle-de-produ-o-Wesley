@@ -41,6 +41,7 @@ function apiResponse(url){
   return Response.json(id?(id.startsWith('consumo:')?bom:stock(id)):[{...bom,rows:undefined}]);
  }
  if(url.pathname==='/api/ana-notes')return Response.json({notes:[],revision:0,canWrite:false,nextBefore:null});
+ if(url.pathname==='/api/plan-boms')return Response.json(url.searchParams.get('id')?{error:'x'}:{plans:[],canEdit:false});
  if(url.pathname==='/api/session')return Response.json({role:'viewer'});
  if(url.pathname==='/api/op-status')return Response.json({statuses:{},revision:0,canEdit:false});
  if(url.pathname==='/api/checks')return Response.json({role:'viewer',revision:1,checks:{}});
@@ -920,6 +921,35 @@ test('7000 × PROJETOS sem MB51 usa a BOM cheia das OPs abertas e avisa',async t
  const current=projectRow(ui,'001-A');
  // 2 OPs abertas × 3 PCS = 6 → manter 6, devolver 3.
  assert.match(cells(current)[3],/^6/);assert.match(cells(current)[5],/^3/);
+ ui.assertHealthy();
+});
+
+// MB51-66 · BOM do plano (OEBOM): qtd. por ônibus × ônibus restantes, editável sem nova leitura.
+test('7000 × PROJETOS soma a BOM do plano e recalcula ao mudar os ônibus restantes',async t=>{
+ const plan={id:'plano:bc10s01-dwb1391',name:'BC10S01 · DWB1391',revision:'A7_V9',units:4,version:'p1',
+  rows:[{id:'1',material:'999-Z',description:'Sobra',unit:'PCS',required:1,source:'Stats'}]};
+ const posts=[];
+ const respond=(url,init)=>{
+  if(url.pathname==='/api/plan-boms'){
+   if(init?.method==='POST'){const body=JSON.parse(init.body);posts.push(body);plan.units=body.units;return Response.json({...plan,rows:undefined});}
+   const id=url.searchParams.get('id');
+   return Response.json(id?plan:{plans:[{...plan,rows:undefined}],canEdit:true});
+  }
+  return projectsApi(url);
+ };
+ const ui=await mount(t,{url:'https://portal.test/?modulo=projetos',respond});
+ await ui.settle(()=>ui.container.querySelectorAll('.stock-project-card').length===3);
+ assert.match(ui.container.querySelector('.stock-plan-list').textContent,/BC10S01 · DWB1391.*4 ônibus restantes/);
+ await ui.click('.stock-projects-actions button','Analisar saldo 7000');
+ await ui.settle(()=>ui.container.querySelectorAll('.stock-projects-table tbody tr').length===4);
+ let row=projectRow(ui,'999-Z');
+ // saldo 4, 1/ônibus × 4 ônibus → manter 4, devolver 0
+ assert.match(cells(row)[2],/1 PCS\/ônibus × 4 ônibus/);assert.match(cells(row)[4],/^4/);assert.match(cells(row)[5],/^0/);
+ const input=ui.container.querySelector('.stock-plan-edit input');
+ await typeInto(input,'1');
+ await ui.click('.stock-plan-edit button','Salvar');
+ await ui.settle(()=>/^3/.test(cells(projectRow(ui,'999-Z'))[5]));
+ assert.deepEqual(posts,[{action:'units',id:plan.id,units:1}]);
  ui.assertHealthy();
 });
 

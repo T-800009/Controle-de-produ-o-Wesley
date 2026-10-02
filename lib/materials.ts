@@ -1,7 +1,7 @@
 import type {MovementEvidence} from './mb51-evidence.ts';
 import {stockModule} from './stock-modules.ts';
 export type Row = Record<string, any>;
-export type Dataset = {id:string; name:string; revision:string; rows:Row[]; ops?:string[]; source:string; updatedAt?:string; version?:string; reviewRequired?:boolean; sheetId?:string; sheetName?:string; mb51Evidence?:Record<string,MovementEvidence>; mb51Mode?:'movement-type'; mb51OrderCoverage?:Record<string,number>; coois?:Row[]; cooisSource?:string; scrap?:Row[]; scrapSource?:string};
+export type Dataset = {id:string; name:string; revision:string; rows:Row[]; ops?:string[]; units?:number; model?:string; dwb?:string; source:string; updatedAt?:string; version?:string; reviewRequired?:boolean; sheetId?:string; sheetName?:string; mb51Evidence?:Record<string,MovementEvidence>; mb51Mode?:'movement-type'; mb51OrderCoverage?:Record<string,number>; coois?:Row[]; cooisSource?:string; scrap?:Row[]; scrapSource?:string};
 export const SHEET_ID='1E36Lf79omaeXrk2etiSdKJRVCtJbeYdYR5gnaOwAMQE';
 export const normalize=(v:unknown)=>String(v??'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z0-9]/g,'');
 export function number(v:unknown):number|null {if(v===null||v===undefined||v==='')return null;if(typeof v==='number')return Number.isFinite(v)?v:null;let s=String(v).trim().replace(/R\$|\s/g,'');if(s.includes(','))s=s.replace(/\./g,'').replace(',','.');return s!==''&&Number.isFinite(Number(s))?Number(s):null;}
