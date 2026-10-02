@@ -48,6 +48,8 @@ export type ProjectInput = {
   consumption?: Row[] | null;
   statuses?: OpStatuses;
   checks?: Record<string, boolean>;
+  /** BOM do plano (OEBOM): ônibus restantes. Definido = demanda por ônibus, sem OPs/MB51. */
+  units?: number | null;
 };
 
 export type ProjectUse = {
@@ -60,7 +62,9 @@ export type ProjectUse = {
   openOps: string[];
   demand: number | null;
   allocated: number | null;
-  basis: "mb51" | "bom";
+  basis: "mb51" | "bom" | "plan";
+  /** Ônibus restantes (somente BOM do plano). */
+  units: number | null;
   /** OPs abertas contadas pela BOM cheia por falta de consumo confiável. */
   uncertainOps: number;
   /** OPs abertas sem movimento na MB51 (não iniciadas). */
@@ -108,7 +112,8 @@ export type ProjectSummary = {
   checkedItems: number;
   uncertainOps: number;
   notStartedOps: number;
-  basis: "mb51" | "bom";
+  basis: "mb51" | "bom" | "plan";
+  units: number | null;
   materials: number;
   stockMaterials: number;
   keep: Record<string, number>;
@@ -154,6 +159,7 @@ export function projectDemand(
   claimed: Set<string> = new Set(),
   completeElsewhere: Set<string> = new Set(),
 ) {
+  if (project.units !== undefined && project.units !== null) return planDemand(project, project.units);
   const ops = [...new Set((project.ops || []).map((op) => String(op).trim()).filter(Boolean))];
   const open: string[] = [],
     duplicateOps: string[] = [];
@@ -250,7 +256,57 @@ export function projectDemand(
       uncertainOps,
       /** Open OPs without any 261/262 in the MB51 read: counted as not started. */
       notStartedOps: open.filter((op) => missingOrders.has(op)).length,
-      basis,
+      basis: basis as "mb51" | "bom" | "plan",
+      units: null as number | null,
+    },
+  };
+}
+
+/** BOM do plano: quantidade por ônibus × ônibus restantes (sem OPs, sem MB51). */
+export function planDemand(project: ProjectInput, units: number) {
+  const demands = new Map<string, Demand>();
+  const unitsByMaterial = new Map<string, Set<string>>();
+  const buses = Number.isFinite(units) && units > 0 ? units : 0;
+  for (const row of project.rows || []) {
+    const material = String(row.material ?? "").trim(),
+      unit = String(row.unit ?? "").trim();
+    if (!material) continue;
+    const key = stockKey(material, unit);
+    const set = unitsByMaterial.get(canonical(material)) || new Set<string>();
+    set.add(unit);
+    unitsByMaterial.set(canonical(material), set);
+    const perBus = finite(row.required) && row.required >= 0 ? row.required : null;
+    const found = demands.get(key);
+    if (found) {
+      found.perOp = found.perOp === null || perBus === null ? null : round(found.perOp + perBus);
+      found.demand = found.perOp === null ? null : round(found.perOp * buses);
+      continue;
+    }
+    demands.set(key, {
+      material,
+      unit,
+      description: String(row.description ?? ""),
+      perOp: perBus,
+      classes: [],
+      openOps: [],
+      demand: perBus === null ? null : round(perBus * buses),
+      uncertainOps: 0,
+      notStartedOps: 0,
+    });
+  }
+  return {
+    demands,
+    units: unitsByMaterial,
+    summary: {
+      totalOps: 0,
+      openOps: 0,
+      closedOps: 0,
+      duplicateOps: [] as string[],
+      checkedItems: 0,
+      uncertainOps: 0,
+      notStartedOps: 0,
+      basis: "plan" as const,
+      units: buses,
     },
   };
 }
@@ -343,6 +399,7 @@ export function stockProjectsReport(stock: Dataset | null, projects: ProjectInpu
         demand: found.demand,
         allocated: null,
         basis: summary.basis,
+        units: summary.units,
         uncertainOps: found.uncertainOps,
         notStartedOps: found.notStartedOps,
       };
@@ -437,7 +494,7 @@ export function stockProjectsReport(stock: Dataset | null, projects: ProjectInpu
     } else if (item.keep === 0) {
       item.state = "return_all";
       item.reason =
-        `Usado em ${uses.map((use) => use.label).join(", ")}, mas as OPs abertas não precisam mais dele.` +
+        `Usado em ${uses.map((use) => use.label).join(", ")}, mas ${uses.every((use) => use.basis === "plan") ? "não há ônibus restantes nesses projetos" : "as OPs abertas não precisam mais dele"}.` +
         ` Devolver ${qty(balance, group.unit)} ao 2000.` +
         note;
     } else if (remaining > 0) {
@@ -455,7 +512,7 @@ export function stockProjectsReport(stock: Dataset | null, projects: ProjectInpu
           .map((use) => use.label)
           .join(" + ")}.` +
         (item.shortfall > 0
-          ? ` Ainda faltam ${qty(item.shortfall, group.unit)} no 7000 para as OPs abertas.`
+          ? ` Ainda faltam ${qty(item.shortfall, group.unit)} no 7000 para a demanda restante.`
           : "") +
         note;
     }
@@ -521,12 +578,18 @@ export function stockProjectsExportRows(items: StockProjectItem[]) {
         UMB: item.unit,
         Projeto: use.label,
         Papel: PROJECT_ROLE_LABELS[use.role],
-        "Qtd. BOM por OP": use.perOp,
+        "Qtd. BOM por OP/ônibus": use.perOp,
+        "Ônibus restantes (plano)": use.units,
         "OPs abertas com demanda": use.openOps.length,
         OPs: use.openOps.join(" / "),
         "Demanda restante": use.role === "excluded" ? null : use.demand,
         "Reservado no 7000": use.allocated,
-        Base: use.basis === "mb51" ? "BOM − consumo MB51/SCRAP" : "BOM cheia das OPs abertas",
+        Base:
+          use.basis === "plan"
+            ? "BOM do plano: qtd. por ônibus × ônibus restantes"
+            : use.basis === "mb51"
+              ? "BOM − consumo MB51/SCRAP"
+              : "BOM cheia das OPs abertas",
         "OPs sem movimento MB51": use.notStartedOps,
         "OPs sem consumo confiável": use.uncertainOps,
       })),

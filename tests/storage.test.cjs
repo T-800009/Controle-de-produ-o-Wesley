@@ -175,6 +175,34 @@ const viewerSnapshot=await (await call(opUrl,{headers:viewerHeaders},viewerEnv))
  assert.equal((await storage.read(db,'7000')).rows.length,1749,'Depósitos intactos');
  assert.equal((await del({id:bomId,version:savedBom.version})).status,404,'Segunda exclusão informa que já não existe');
 }
+// MB51-66 · BOMs do plano (OEBOM): admin cadastra, muda ônibus restantes e apaga; Consulta só lê.
+{
+ const planUrl='/api/plan-boms',jsonHeaders={...headers,Origin:'https://portal.test','Content-Type':'application/json'};
+ const post=(body,h=jsonHeaders,env=environment)=>call(planUrl,{method:'POST',headers:h,body:JSON.stringify(body)},env);
+ const data={id:'plano:bc22s02-dwb1363',name:'BC22S02 · DWB1363',revision:'A7_V9',model:'BC22S02',dwb:'1363',units:40,source:'teste.xlsx',version:'new',
+  rows:[{id:'1',material:'11911717-00',description:'Tubo',unit:'PCS',required:5,source:'Stats'},{id:'2',material:'17742636-00',description:'Plate',unit:'PCS',required:2,source:'Stats+KD'}]};
+ assert.equal((await post({action:'save',data},viewerHeaders,viewerEnv)).status,403,'Consulta não cadastra');
+ assert.equal((await post({action:'save',data:{...data,units:-1}})).status,400,'ônibus negativo');
+ assert.equal((await post({action:'save',data:{...data,rows:[{material:'X',required:1}]}})).status,400,'SAP inválido');
+ assert.equal((await post({action:'save',data:{...data,id:'consumo:x'}})).status,400,'rota não grava BOM × OP');
+ const saved=await post({action:'save',data});assert.equal(saved.status,200);const version=(await saved.json()).version;
+ assert.equal((await post({action:'save',data})).status,400,'versão velha não sobrescreve');
+ const list=await (await call(planUrl,{headers:viewerHeaders},viewerEnv)).json();
+ assert.equal(list.canEdit,false);assert.equal(list.plans.length,1);assert.equal(list.plans[0].units,40);assert.equal(list.plans[0].rows,undefined,'lista sem linhas');
+ assert.ok(!(await (await call('/api/data',{headers})).json()).some(item=>item.id===data.id),'BOM do plano não aparece no seletor da BOM × OP');
+ assert.equal((await post({action:'units',id:data.id,units:13})).status,200);
+ assert.equal((await post({action:'units',id:data.id,units:1.5})).status,400);
+ const full=await (await call(planUrl+'?id='+encodeURIComponent(data.id),{headers})).json();
+ assert.equal(full.units,13);assert.equal(full.rows.length,2);assert.equal(full.version,version,'mudar ônibus não troca as linhas');
+ const replaced=await post({action:'save',data:{...data,units:13,version,rows:[data.rows[0]]}});assert.equal(replaced.status,200,'reenviar o OEBOM substitui');
+ const v2=(await replaced.json()).version;assert.equal((await storage.read(db,data.id)).rows.length,1);
+ const del=(q,h={...headers,Origin:'https://portal.test'},env=environment)=>call(planUrl+'?'+new URLSearchParams(q),{method:'DELETE',headers:h},env);
+ assert.equal((await del({id:data.id,version:v2},viewerHeaders,viewerEnv)).status,403);
+ assert.equal((await del({id:data.id,version:version})).status,409);
+ assert.equal((await del({id:data.id,version:v2})).status,200);
+ assert.equal((await (await call(planUrl,{headers})).json()).plans.length,0);
+ assert.equal((await db.prepare('SELECT COUNT(*) AS n FROM entries WHERE dataset=?').bind(data.id).first()).n,0);
+}
 // Shared Ana notes are append-only and analyst access never grants OP marking.
 const analystPassword=require('node:crypto').randomBytes(24).toString('hex');
 const analystEnv={...viewerEnv,PORTAL_ANALYST_PASSWORD:analystPassword};

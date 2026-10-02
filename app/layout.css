@@ -472,6 +472,27 @@ html { scroll-padding-top: 92px; }
 .shell .stock-project-role button.role-incoming[aria-pressed="true"]{background:#ead18b}
 .shell .stock-project-role button.role-excluded[aria-pressed="true"]{background:#c3ced9}
 .stock-projects-note{display:block;margin-top:14px;font-size:11px;line-height:1.6;color:var(--ui-muted)}
+.shell .stock-projects .stock-plan-boms{margin-top:14px}
+.stock-plan-boms .stock-projects-roles-head button{display:inline-flex;align-items:center;gap:8px}
+.stock-plan-status{display:flex;align-items:center;gap:8px;margin:0 0 12px;font-size:12px;color:#d5dfea}
+.stock-plan-pending{margin:0 0 14px;padding:12px 14px;border:1px dashed #ead18b66;border-radius:8px;background:#dfbb4208;overflow-x:auto}
+.stock-plan-pending>b{display:block;font-size:12px;margin-bottom:8px;color:#ead18b}
+.stock-plan-pending table{width:100%;min-width:560px;border-collapse:collapse;font-size:12px}
+.stock-plan-pending th{text-align:left;font-weight:600;color:var(--ui-muted);padding:6px 8px;border-bottom:1px solid var(--ui-line)}
+.stock-plan-pending td{padding:8px;border-bottom:1px solid #ffffff10;vertical-align:top}
+.stock-plan-pending td small{display:block;font-size:11px;color:var(--ui-muted);margin-top:3px}
+.stock-plan-pending .stock-plan-file{max-width:260px;overflow-wrap:anywhere;color:var(--ui-muted)}
+.stock-plan-pending input,.stock-plan-edit input{width:90px;padding:6px 8px}
+.stock-plan-pending .stock-projects-actions{margin-top:12px}
+.stock-plan-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:10px}
+.stock-plan-list article{display:flex;justify-content:space-between;align-items:center;gap:10px;min-width:0;padding:10px 12px;border:1px solid var(--ui-line);border-left:3px solid #8ed4af;border-radius:8px;background:#ffffff04}
+.stock-plan-list article.is-done{border-left-color:#6f7c8b;opacity:.85}
+.stock-plan-list b{display:block;font-size:13px;overflow-wrap:anywhere}
+.stock-plan-list small{display:block;margin-top:3px;font-size:11px;color:var(--ui-muted)}
+.stock-plan-edit{display:flex;align-items:center;gap:6px;flex-shrink:0}
+.stock-plan-edit input{width:64px}
+.shell .stock-plan-edit button{padding:6px 10px}
+.shell .stock-plan-edit button.icon-only{display:inline-flex;align-items:center;padding:6px 8px}
 .stock-projects-metrics .metric-return{border-color:#ead18b55;background:#dfbb420a}
 .stock-projects-metrics .metric-return strong{color:#ead18b}
 .shell .stock-projects-table table{min-width:1180px}

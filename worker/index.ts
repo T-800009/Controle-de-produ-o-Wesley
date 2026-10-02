@@ -1,6 +1,6 @@
 import {configured,authRoute,loginPage,sessionRole,type PortalRole,type PasswordEnv} from './auth';
 import {automaticSource,automaticCoois,automaticAnaSource} from './automatic';
-import {ensureSchema,list,read,save,removeDataset,updateDatasetMeta,DatasetRemovalError,listManualChecks,manualChecksRevision,updateManualChecks,clearManualChecks,opStatusRevision,listOpStatuses,updateOpStatus,updateOpStatuses} from './storage';
+import {ensureSchema,list,listPlans,updatePlanUnits,read,save,removeDataset,updateDatasetMeta,DatasetRemovalError,listManualChecks,manualChecksRevision,updateManualChecks,clearManualChecks,opStatusRevision,listOpStatuses,updateOpStatus,updateOpStatuses} from './storage';
 import {isOpStatus} from '../lib/op-status';
 import {anaNotesRoute} from './ana-notes';
 import {STOCK_MODULES,stockModule} from '../lib/stock-modules';
@@ -29,7 +29,7 @@ export default {
     if(!authenticatedRole)return path.startsWith('/api/')?json({error:configured(env)?'Sessão expirada. Recarregue a página e entre novamente.':'O responsável precisa configurar a senha do portal.'},configured(env)?401:503):loginPage('',configured(env)?200:503,!configured(env));
     role=authenticatedRole;
    }
-   if(path==='/api/version')return json({version:'MB51-65',scrapForms:true,costCenterForms:true,legacyImport:true,scrapFormSignatureCheck:true,costCenterSheetRead:false,allOpsOk:true,stock7000Projects:true,bomDelete:true,bomImportWithoutOpColumns:true,bomEditOps:true,stock7000SingleMb51Read:true,databaseProvider:databaseProvider(bindings),tursoSupported:true,databaseErrorCodes:true,revisionOnlyPolling:true,mb51Trace:true,scrapDocumentReconciliation:true,backgroundSourceProcessing:true,stockSources:STOCK_MODULES.map(stock=>({id:stock.id,sheet:stock.sheet})),warehouseClassFilter:true,spacedNavigation:true,operationalStatusChart:true,warehouseConsolidated:true,warehouseSharedBalance:true,opCardsWithoutSapCounts:true,responsiveLayout:true,anaNotesSingleColumn:true,anaOrderCards:true,production7000First:true,warehouse2000Comparison:true,mb51OrderCoverage:true,automaticSource:true,coois:true,cooisOptional:true,anaCheck:true,anaVisualOverview:true,anaPortugueseDescriptions:true,anaSharedNotes:true,anaAnalystRole:true,anaCooisPendingFlag:true,anaNativeSap:true,anaCostReferences:true,anaCurrencyTotals:true,anaCoverageAudit:true,opStatusAndConsumptionViews:true,anaOptionalMm60:true,anaSources:['KOB1','ZPP009','MM60','COOIS'],physicalFinalization:false,manualOpStatus:true,stockSingleRead:true,stock2000:true,stockHeaderMapping:true,opClassChart:true,mainChartNavigation:true,fullWidthLayout:true,topTableScroll:true,sapOnlyPending:false,neutralTheme:true,excelFormula:false,formulaKeyFallback:true,footerBomUpload:true,multipleBoms:true,autoBomRevision:true,scrap:true,scrapDiagnostics:true,scrapConsumption:true,scrapNetting:true,overageNotShortage:true,sharedAdminChecks:true,viewerReadOnly:true,bulkManualChecks:true,instantSharedChecks:true,refreshIntervalMinutes:0,manualRefreshOnly:true,fixedBomItems:true,performanceOptimized:true});
+   if(path==='/api/version')return json({version:'MB51-66',scrapForms:true,costCenterForms:true,legacyImport:true,scrapFormSignatureCheck:true,costCenterSheetRead:false,allOpsOk:true,stock7000Projects:true,planBoms:true,bomDelete:true,bomImportWithoutOpColumns:true,bomEditOps:true,stock7000SingleMb51Read:true,databaseProvider:databaseProvider(bindings),tursoSupported:true,databaseErrorCodes:true,revisionOnlyPolling:true,mb51Trace:true,scrapDocumentReconciliation:true,backgroundSourceProcessing:true,stockSources:STOCK_MODULES.map(stock=>({id:stock.id,sheet:stock.sheet})),warehouseClassFilter:true,spacedNavigation:true,operationalStatusChart:true,warehouseConsolidated:true,warehouseSharedBalance:true,opCardsWithoutSapCounts:true,responsiveLayout:true,anaNotesSingleColumn:true,anaOrderCards:true,production7000First:true,warehouse2000Comparison:true,mb51OrderCoverage:true,automaticSource:true,coois:true,cooisOptional:true,anaCheck:true,anaVisualOverview:true,anaPortugueseDescriptions:true,anaSharedNotes:true,anaAnalystRole:true,anaCooisPendingFlag:true,anaNativeSap:true,anaCostReferences:true,anaCurrencyTotals:true,anaCoverageAudit:true,opStatusAndConsumptionViews:true,anaOptionalMm60:true,anaSources:['KOB1','ZPP009','MM60','COOIS'],physicalFinalization:false,manualOpStatus:true,stockSingleRead:true,stock2000:true,stockHeaderMapping:true,opClassChart:true,mainChartNavigation:true,fullWidthLayout:true,topTableScroll:true,sapOnlyPending:false,neutralTheme:true,excelFormula:false,formulaKeyFallback:true,footerBomUpload:true,multipleBoms:true,autoBomRevision:true,scrap:true,scrapDiagnostics:true,scrapConsumption:true,scrapNetting:true,overageNotShortage:true,sharedAdminChecks:true,viewerReadOnly:true,bulkManualChecks:true,instantSharedChecks:true,refreshIntervalMinutes:0,manualRefreshOnly:true,fixedBomItems:true,performanceOptimized:true});
    if(path==='/api/session')return json({role,canMark:role==='admin',canWriteAna:role==='admin'||role==='analyst'});
    if(path==='/api/ana-notes')return await anaNotesRoute(req,env.DB,role);
    if(path==='/api/data'){
@@ -90,6 +90,33 @@ export default {
       default:return json({error:'Ação inválida.'},400);
      }
     }catch(e){if(e instanceof ScrapError)return json({error:e.message},e.status);throw e;}
+   }
+   if(path==='/api/plan-boms'){
+    // BOMs do plano (OEBOM): consulta para todos; cadastrar, mudar ônibus restantes e apagar só o administrador.
+    if(!env.DB)return json({error:'Banco de dados não configurado.'},503);
+    await ensureSchema(env.DB);
+    if(req.method==='GET'){
+     const id=url.searchParams.get('id');
+     if(!id)return json({plans:await listPlans(env.DB),canEdit:!requirePassword||role==='admin'});
+     if(!/^plano:[a-z0-9-]{1,120}$/.test(id))return json({error:'BOM do plano inválida.'},400);
+     const found=await read(env.DB,id);
+     return found?json(found):json({error:'BOM do plano não encontrada.',code:'DATASET_NOT_FOUND'},404);
+    }
+    if(requirePassword&&role!=='admin')return json({error:'Somente o administrador pode cadastrar ou alterar BOMs do plano.'},403);
+    if(req.headers.get('origin')!==url.origin||req.headers.get('sec-fetch-site')==='cross-site')return json({error:'Origem inválida.'},403);
+    try{
+     if(req.method==='DELETE')return json(await removeDataset(env.DB,url.searchParams.get('id')||'',url.searchParams.get('version')||''));
+     if(req.method!=='POST')return json({error:'Método não permitido.'},405);
+     if(!req.headers.get('content-type')?.startsWith('application/json'))return json({error:'Formato inválido.'},415);
+     const body=await bodyLimited(req);
+     if(body?.action==='units')return json(await updatePlanUnits(env.DB,String(body.id||''),body.units));
+     if(body?.action==='save'){if(!String(body.data?.id||'').startsWith('plano:'))return json({error:'BOM do plano inválida.'},400);return json(await save(env.DB,body.data));}
+     return json({error:'Ação inválida.'},400);
+    }catch(e){
+     if(e instanceof DatasetRemovalError)return json({error:e.message},e.status);
+     if(e instanceof SyntaxError)return json({error:'Formato inválido.'},400);
+     return json({error:(e as Error).message},400);
+    }
    }
    if(path==='/api/data-meta'){
     if(!env.DB)return json({error:'Banco de dados não configurado.'},503);

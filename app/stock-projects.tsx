@@ -1,5 +1,6 @@
 import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowDownToLine, Download, PackageCheck, RefreshCw, TriangleAlert, Undo2 } from "lucide-react";
+import { ArrowDownToLine, Download, FileSpreadsheet, PackageCheck, RefreshCw, Trash2, TriangleAlert, Undo2 } from "lucide-react";
+import { parsePlanBom, type PlanBom } from "@/lib/oebom";
 import TableViewport from "@/components/table-viewport";
 import { requestJson } from "@/lib/api";
 import type { Dataset, Row } from "@/lib/materials";
@@ -20,6 +21,8 @@ import {
 } from "@/lib/stock-projects";
 
 type BomMeta = { id: string; name: string; revision: string; ops?: string[] };
+type PlanMeta = { id: string; name: string; revision: string; units: number; model?: string; dwb?: string; source?: string; version: string; updatedAt?: string };
+type PendingPlan = { file: string; bom: PlanBom; units: string; existing: PlanMeta | null };
 type LoadedProject = {
   id: string;
   name: string;
@@ -32,6 +35,8 @@ type LoadedProject = {
   statusError: string;
   checks: Record<string, boolean>;
   checksError: string;
+  /** BOM do plano (OEBOM): sem OPs; a demanda usa os ônibus restantes. */
+  plan: boolean;
 };
 type Loaded = {
   projects: LoadedProject[];
@@ -79,7 +84,15 @@ export default function StockProjects() {
     [stateFilter, setStateFilter] = useState("all"),
     [projectFilter, setProjectFilter] = useState("all"),
     [page, setPage] = useState(0),
-    [exporting, setExporting] = useState(false);
+    [exporting, setExporting] = useState(false),
+    [plans, setPlans] = useState<PlanMeta[]>([]),
+    [canEditPlans, setCanEditPlans] = useState(false),
+    [planBusy, setPlanBusy] = useState(""),
+    [planError, setPlanError] = useState(""),
+    [planNotice, setPlanNotice] = useState(""),
+    [pending, setPending] = useState<PendingPlan[]>([]),
+    [unitDrafts, setUnitDrafts] = useState<Record<string, string>>({});
+  const fileInput = useRef<HTMLInputElement>(null);
   const run = useRef(0);
   const deferredQuery = useDeferredValue(query);
 
@@ -87,11 +100,140 @@ export default function StockProjects() {
     requestJson("/api/data")
       .then((list: BomMeta[]) => setBoms(Array.isArray(list) ? list : []))
       .catch((e) => setBomsError((e as Error).message));
+    loadPlans();
     return () => {
       run.current++;
     };
   }, []);
   const roleOf = (id: string): ProjectRole => roles[id] || "active";
+  const planUnits = useMemo(() => new Map(plans.map((plan) => [plan.id, plan.units])), [plans]);
+
+  async function loadPlans() {
+    try {
+      const payload = await requestJson("/api/plan-boms");
+      setPlans(Array.isArray(payload?.plans) ? payload.plans : []);
+      setCanEditPlans(!!payload?.canEdit);
+    } catch (e) {
+      setPlanError((e as Error).message);
+    }
+  }
+
+  async function choosePlanFiles(files: FileList | null) {
+    if (!files?.length) return;
+    setPlanError("");
+    setPlanNotice("");
+    setPlanBusy("Lendo os arquivos OEBOM…");
+    try {
+      const x = await import("xlsx");
+      const parsed: PendingPlan[] = [],
+        errors: string[] = [];
+      for (const file of Array.from(files)) {
+        try {
+          const book = x.read(await file.arrayBuffer(), { type: "array", dense: true });
+          // Só as abas usadas (Stats e KD): o resto do OEBOM é ignorado.
+          const sheets = Object.fromEntries(
+            book.SheetNames.filter((name) => /Stats|KD/i.test(name)).map((name) => [
+              name,
+              x.utils.sheet_to_json(book.Sheets[name], { header: 1, defval: null }) as unknown[][],
+            ]),
+          );
+          const bom = parsePlanBom(file.name, sheets);
+          const existing = plans.find((plan) => plan.id === bom.id) || null;
+          parsed.push({ file: file.name, bom, units: existing ? String(existing.units) : "", existing });
+        } catch (e) {
+          errors.push((e as Error).message);
+        }
+      }
+      setPending((current) => [...current.filter((item) => !parsed.some((p) => p.bom.id === item.bom.id)), ...parsed]);
+      if (errors.length) setPlanError(errors.join(" "));
+    } finally {
+      setPlanBusy("");
+      if (fileInput.current) fileInput.current.value = "";
+    }
+  }
+
+  async function savePending() {
+    const missing = pending.filter((item) => !/^\d+$/.test(item.units.trim()));
+    if (missing.length) {
+      setPlanError(`Informe os ônibus restantes de: ${missing.map((item) => item.bom.name).join(", ")} (use 0 para projeto concluído).`);
+      return;
+    }
+    setPlanError("");
+    const saved: string[] = [],
+      errors: string[] = [];
+    for (const [index, item] of pending.entries()) {
+      setPlanBusy(`Salvando ${item.bom.name} (${index + 1}/${pending.length})…`);
+      try {
+        await requestJson(
+          "/api/plan-boms",
+          {
+            action: "save",
+            data: {
+              id: item.bom.id,
+              name: item.bom.name,
+              revision: item.bom.revision,
+              model: item.bom.model,
+              dwb: item.bom.dwb,
+              units: Number(item.units),
+              source: item.file,
+              rows: item.bom.rows,
+              version: item.existing?.version ?? "new",
+            },
+          },
+          60_000,
+        );
+        saved.push(item.bom.name);
+      } catch (e) {
+        errors.push(`${item.bom.name}: ${(e as Error).message}`);
+      }
+    }
+    setPlanBusy("");
+    setPending((current) => current.filter((item) => !saved.includes(item.bom.name)));
+    if (saved.length) setPlanNotice(`${saved.length} BOM(s) do plano salva(s): ${saved.join(", ")}. Clique em Analisar saldo 7000.`);
+    if (errors.length) setPlanError(errors.join(" "));
+    await loadPlans();
+  }
+
+  async function saveUnits(plan: PlanMeta) {
+    const draft = (unitDrafts[plan.id] ?? String(plan.units)).trim();
+    if (!/^\d+$/.test(draft)) {
+      setPlanError(`${plan.name}: informe um número inteiro de ônibus (0 = concluído).`);
+      return;
+    }
+    setPlanError("");
+    setPlanBusy(`Salvando ${plan.name}…`);
+    try {
+      await requestJson("/api/plan-boms", { action: "units", id: plan.id, units: Number(draft) });
+      setPlans((current) => current.map((item) => (item.id === plan.id ? { ...item, units: Number(draft) } : item)));
+      setUnitDrafts(({ [plan.id]: _, ...rest }) => rest);
+    } catch (e) {
+      setPlanError(`${plan.name}: ${(e as Error).message}`);
+    } finally {
+      setPlanBusy("");
+    }
+  }
+
+  async function deletePlan(plan: PlanMeta) {
+    if (!confirm(`Apagar a BOM do plano ${plan.name}? Ela sai da análise; dá para cadastrar de novo com o arquivo OEBOM.`)) return;
+    setPlanError("");
+    setPlanBusy(`Apagando ${plan.name}…`);
+    try {
+      await requestJson(
+        `/api/plan-boms?id=${encodeURIComponent(plan.id)}&version=${encodeURIComponent(plan.version)}`,
+        undefined,
+        30_000,
+        "DELETE",
+      );
+      setLoaded((current) =>
+        current ? { ...current, projects: current.projects.filter((project) => project.id !== plan.id) } : current,
+      );
+      await loadPlans();
+    } catch (e) {
+      setPlanError(`${plan.name}: ${(e as Error).message}`);
+    } finally {
+      setPlanBusy("");
+    }
+  }
   function changeRole(id: string, role: ProjectRole) {
     setRoles((current) => {
       const next = { ...current, [id]: role };
@@ -145,7 +287,31 @@ export default function StockProjects() {
         checks: { value: Record<string, boolean>; error: string };
       }[];
       if (n !== run.current) return;
-      if (!bases.length) throw Error("Nenhuma BOM pôde ser carregada. " + loadErrors.join(" "));
+      setStep("Lendo as BOMs do plano…");
+      const planList: PlanMeta[] = await requestJson("/api/plan-boms").then(
+        (payload) => (Array.isArray(payload?.plans) ? payload.plans : []),
+        (e) => {
+          loadErrors.push(`BOMs do plano: ${(e as Error).message}`);
+          return [];
+        },
+      );
+      setPlans(planList);
+      const planBases = (
+        await Promise.all(
+          planList.map(async (meta) => {
+            try {
+              const data: Dataset = await requestJson("/api/plan-boms?id=" + encodeURIComponent(meta.id));
+              if (!Array.isArray(data?.rows)) throw Error("BOM sem linhas.");
+              return data;
+            } catch (e) {
+              loadErrors.push(`${projectLabel(meta)}: ${(e as Error).message}`);
+              return null;
+            }
+          }),
+        )
+      ).filter(Boolean) as Dataset[];
+      if (n !== run.current) return;
+      if (!bases.length && !planBases.length) throw Error("Nenhuma BOM pôde ser carregada. " + loadErrors.join(" "));
       setStep("Lendo o saldo livre do 7000…");
       const stockBase: Dataset = await requestJson("/api/data?id=7000");
       const stock = await readAutomatic(stockBase);
@@ -179,7 +345,8 @@ export default function StockProjects() {
       }
       if (n !== run.current) return;
       setLoaded({
-        projects: bases.map(({ data, statuses, checks }) => ({
+        projects: [
+          ...bases.map(({ data, statuses, checks }) => ({
           id: data.id,
           name: data.name,
           revision: data.revision,
@@ -191,7 +358,23 @@ export default function StockProjects() {
           statusError: statuses.error,
           checks: checks.value,
           checksError: checks.error,
+          plan: false,
         })),
+          ...planBases.map((data) => ({
+            id: data.id,
+            name: data.name,
+            revision: data.revision,
+            ops: [],
+            rows: data.rows,
+            consumption: null,
+            mb51Error: "",
+            statuses: {},
+            statusError: "",
+            checks: {},
+            checksError: "",
+            plan: true,
+          })),
+        ],
         stock,
         mb51,
         loadErrors,
@@ -220,9 +403,10 @@ export default function StockProjects() {
         consumption: useMb51 ? project.consumption : null,
         statuses: project.statuses,
         checks: project.checks,
+        units: project.plan ? (planUnits.get(project.id) ?? 0) : undefined,
       })),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [loaded, roles, useMb51],
+    [loaded, roles, useMb51, planUnits],
   );
   const report = useMemo(
     () => (loaded ? stockProjectsReport(loaded.stock, inputs) : null),
@@ -267,6 +451,20 @@ export default function StockProjects() {
       (project) =>
         `${project.label}: ${project.duplicateOps.length} de ${project.totalOps} OP(s) repetem outra BOM de maior prioridade e foram contadas só uma vez (${project.duplicateOps.slice(0, 4).join(", ")}${project.duplicateOps.length > 4 ? "…" : ""}).${project.duplicateOps.length === project.totalOps ? " Parece uma BOM duplicada: se foi cadastro errado, apague-a em BOM × OP → Apagar esta BOM." : ""}`,
     );
+  const planOverlap = (loaded?.projects || [])
+    .filter((project) => project.plan && roleOf(project.id) !== "excluded" && (planUnits.get(project.id) ?? 0) > 0)
+    .flatMap((plan) => {
+      const dwb = plan.name.match(/DWB(\d{3,5})/i)?.[1];
+      const twin = dwb
+        ? (loaded?.projects || []).find(
+            (other) =>
+              !other.plan && roleOf(other.id) !== "excluded" && new RegExp(`(^|\\D)${dwb}(\\D|$)`).test(`${other.name} ${other.revision}`),
+          )
+        : undefined;
+      return twin
+        ? [`${projectLabel(plan)} e ${projectLabel(twin)} parecem o mesmo projeto: a demanda seria contada duas vezes. Deixe um deles como “Fora da análise”.`]
+        : [];
+    });
   const projectWarnings = (loaded?.projects || []).flatMap((project) => [
     ...(project.statusError
       ? [`${projectLabel(project)}: status das OPs indisponível (${project.statusError}); todas contam como abertas.`]
@@ -301,7 +499,7 @@ export default function StockProjects() {
       x.utils.book_append_sheet(book, totals, "Devolucao_2000");
       x.utils.book_append_sheet(book, detail, "Uso_por_Projeto");
       const criteria = x.utils.aoa_to_sheet([
-        ["Saldo 7000 × Projetos", "MB51-61"],
+        ["Saldo 7000 × Projetos", "MB51-66"],
         ["Gerado em", new Date().toLocaleString("pt-BR")],
         ["7000", loaded.stock.source, stamp(loaded.stock.updatedAt)],
         [
@@ -317,7 +515,9 @@ export default function StockProjects() {
         ...report.projects.map((project) => [
           "Projeto",
           `${project.label} — ${PROJECT_ROLE_LABELS[project.role]}`,
-          `${project.openOps} OPs abertas · ${project.closedOps} concluídas · base ${project.basis === "mb51" ? "BOM − MB51/SCRAP" : "BOM cheia"}`,
+          project.basis === "plan"
+            ? `BOM do plano · ${project.units ?? 0} ônibus restantes · qtd. por ônibus × ônibus`
+            : `${project.openOps} OPs abertas · ${project.closedOps} concluídas · base ${project.basis === "mb51" ? "BOM − MB51/SCRAP" : "BOM cheia"}`,
         ]),
         ["Prioridade", "O saldo é reservado primeiro para Em produção e depois para Vai entrar, na ordem da lista."],
         [
@@ -383,19 +583,23 @@ export default function StockProjects() {
           </p>
         )}
         <div className="stock-projects-role-grid">
-          {(loaded?.projects || boms).map((project) => {
+          {(loaded?.projects || [...boms, ...plans.map((plan) => ({ ...plan, ops: [], plan: true }))]).map((project) => {
             const role = roleOf(project.id),
-              summary = report?.projects.find((item) => item.id === project.id);
+              summary = report?.projects.find((item) => item.id === project.id),
+              isPlan = "plan" in project && project.plan === true;
             return (
               <article className={`stock-project-card role-${role}`} key={project.id}>
                 <div>
                   <b>{projectLabel(project)}</b>
                   <small>
-                    {summary
-                      ? `${fmt(summary.openOps)} OPs abertas · ${fmt(summary.closedOps)} concluídas · usa ${fmt(summary.stockMaterials)} materiais do 7000`
-                      : `${fmt(project.ops?.length || 0)} OPs cadastradas`}
+                    {isPlan
+                      ? `BOM do plano · ${fmt(planUnits.get(project.id) ?? 0)} ônibus restantes${summary ? ` · usa ${fmt(summary.stockMaterials)} materiais do 7000` : ""}`
+                      : summary
+                        ? `${fmt(summary.openOps)} OPs abertas · ${fmt(summary.closedOps)} concluídas · usa ${fmt(summary.stockMaterials)} materiais do 7000`
+                        : `${fmt(project.ops?.length || 0)} OPs cadastradas`}
                   </small>
-                  {summary && role !== "excluded" && (
+                  {isPlan && role !== "excluded" && <small>Base: qtd. por ônibus (OEBOM) × ônibus restantes</small>}
+                  {summary && !isPlan && role !== "excluded" && (
                     <small>
                       Base:{" "}
                       {summary.basis === "mb51"
@@ -432,6 +636,168 @@ export default function StockProjects() {
           {considered.length
             ? `${considered.length} projeto(s) seguram saldo no 7000.`
             : "Nenhum projeto segura saldo: todo o 7000 aparecerá para devolução."}
+        </small>
+      </div>
+
+      <div className="stock-projects-roles stock-plan-boms" aria-label="BOMs do plano de produção">
+        <div className="stock-projects-roles-head">
+          <div>
+            <b>BOMs do plano de produção (OEBOM)</b>
+            <span>
+              Arquivo OEBOM da China (aba Stats + KD list). Demanda = quantidade usada no Brasil por ônibus × ônibus
+              restantes do plano. Use 0 para projeto concluído.
+            </span>
+          </div>
+          {canEditPlans && (
+            <>
+              <input
+                ref={fileInput}
+                type="file"
+                accept=".xlsx,.xls"
+                multiple
+                hidden
+                aria-label="Arquivos OEBOM"
+                onChange={(e) => choosePlanFiles(e.target.files)}
+              />
+              <button disabled={!!planBusy} onClick={() => fileInput.current?.click()}>
+                <FileSpreadsheet size={16} />
+                Adicionar BOMs (OEBOM)
+              </button>
+            </>
+          )}
+        </div>
+        {planBusy && (
+          <p className="stock-plan-status" role="status">
+            <RefreshCw size={14} className="spin" /> {planBusy}
+          </p>
+        )}
+        {planError && (
+          <p className="notice" role="alert">
+            {planError}
+          </p>
+        )}
+        {planNotice && <p className="stock-plan-status">{planNotice}</p>}
+        {pending.length > 0 && (
+          <div className="stock-plan-pending">
+            <b>Conferir antes de salvar</b>
+            <table>
+              <thead>
+                <tr>
+                  <th>Projeto</th>
+                  <th>Arquivo</th>
+                  <th>Materiais</th>
+                  <th>Ônibus restantes</th>
+                  <th />
+                </tr>
+              </thead>
+              <tbody>
+                {pending.map((item) => (
+                  <tr key={item.bom.id}>
+                    <td>
+                      <b>{item.bom.name}</b>
+                      <small>
+                        {item.bom.revision || "sem revisão"}
+                        {item.existing ? " · substitui a BOM já cadastrada" : " · nova"}
+                      </small>
+                      {item.bom.warnings.map((warning) => (
+                        <small key={warning}>{warning}</small>
+                      ))}
+                    </td>
+                    <td className="stock-plan-file">{item.file}</td>
+                    <td>
+                      {fmt(item.bom.rows.length)}
+                      <small>
+                        Stats {fmt(item.bom.statsRows)} · KD {fmt(item.bom.kdRows)}
+                      </small>
+                    </td>
+                    <td>
+                      <input
+                        inputMode="numeric"
+                        aria-label={`Ônibus restantes de ${item.bom.name}`}
+                        placeholder="ex.: 40"
+                        value={item.units}
+                        onChange={(e) =>
+                          setPending((current) =>
+                            current.map((p) => (p.bom.id === item.bom.id ? { ...p, units: e.target.value } : p)),
+                          )
+                        }
+                      />
+                    </td>
+                    <td>
+                      <button
+                        type="button"
+                        onClick={() => setPending((current) => current.filter((p) => p.bom.id !== item.bom.id))}
+                      >
+                        Remover
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <div className="stock-projects-actions">
+              <button className="primary" disabled={!!planBusy} onClick={savePending}>
+                Salvar {pending.length} BOM(s) do plano
+              </button>
+              <button disabled={!!planBusy} onClick={() => setPending([])}>
+                Cancelar
+              </button>
+            </div>
+          </div>
+        )}
+        {plans.length > 0 ? (
+          <div className="stock-plan-list">
+            {plans.map((plan) => {
+              const draft = unitDrafts[plan.id] ?? String(plan.units);
+              const changed = draft !== String(plan.units);
+              return (
+                <article key={plan.id} className={plan.units > 0 ? "" : "is-done"}>
+                  <div>
+                    <b>{plan.name}</b>
+                    <small>
+                      {plan.revision || "sem revisão"} · {plan.units > 0 ? `${fmt(plan.units)} ônibus restantes` : "concluído (0)"}
+                    </small>
+                  </div>
+                  {canEditPlans ? (
+                    <div className="stock-plan-edit">
+                      <input
+                        inputMode="numeric"
+                        aria-label={`Ônibus restantes de ${plan.name}`}
+                        value={draft}
+                        onChange={(e) => setUnitDrafts((current) => ({ ...current, [plan.id]: e.target.value }))}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" && changed) saveUnits(plan);
+                        }}
+                      />
+                      <button disabled={!changed || !!planBusy} onClick={() => saveUnits(plan)}>
+                        Salvar
+                      </button>
+                      <button
+                        className="icon-only"
+                        title={`Apagar ${plan.name}`}
+                        aria-label={`Apagar ${plan.name}`}
+                        disabled={!!planBusy}
+                        onClick={() => deletePlan(plan)}
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                  ) : null}
+                </article>
+              );
+            })}
+          </div>
+        ) : (
+          !pending.length && (
+            <small className="stock-projects-note">
+              Nenhuma BOM do plano cadastrada.{" "}
+              {canEditPlans ? "Clique em Adicionar BOMs (OEBOM) e informe quantos ônibus faltam de cada projeto." : ""}
+            </small>
+          )
+        )}
+        <small className="stock-projects-note">
+          Os ônibus restantes ficam salvos no portal para todos. Mudou o plano? Altere o número e clique em Salvar: a
+          análise já carregada recalcula na hora.
         </small>
       </div>
 
@@ -484,11 +850,11 @@ export default function StockProjects() {
               </div>
             </div>
           )}
-          {[...loaded.loadErrors, ...projectWarnings, ...duplicateNotes].length > 0 && (
+          {[...loaded.loadErrors, ...projectWarnings, ...duplicateNotes, ...planOverlap].length > 0 && (
             <div className="notice">
               <TriangleAlert size={18} />
               <div>
-                {[...loaded.loadErrors, ...projectWarnings, ...duplicateNotes].map((text) => (
+                {[...loaded.loadErrors, ...projectWarnings, ...duplicateNotes, ...planOverlap].map((text) => (
                   <p key={text}>{text}</p>
                 ))}
               </div>
@@ -721,8 +1087,10 @@ function StockProjectRow({ item }: { item: StockProjectItem }) {
               <li key={use.projectId} className={"role-" + use.role}>
                 <b>{use.label}</b>
                 <span>
-                  {PROJECT_ROLE_LABELS[use.role]} · {fmt(use.perOp)} {use.unit}/OP ·{" "}
-                  {use.openOps.length ? `${use.openOps.length} OP(s) com demanda` : "sem demanda nas OPs abertas"}
+                  {PROJECT_ROLE_LABELS[use.role]} ·{" "}
+                  {use.basis === "plan"
+                    ? `${fmt(use.perOp)} ${use.unit}/ônibus × ${fmt(use.units)} ônibus`
+                    : `${fmt(use.perOp)} ${use.unit}/OP · ${use.openOps.length ? `${use.openOps.length} OP(s) com demanda` : "sem demanda nas OPs abertas"}`}
                 </span>
               </li>
             ))}
@@ -766,6 +1134,7 @@ function StockProjectRow({ item }: { item: StockProjectItem }) {
               {item.uses.map((use) => (
                 <li key={use.projectId}>
                   {use.label}: demanda {fmt(use.demand)} → reserva <b>{fmt(use.allocated)}</b> {unit}
+                  {use.basis === "plan" ? ` (${fmt(use.perOp)} × ${fmt(use.units)} ônibus)` : ""}
                   {use.notStartedOps ? ` · ${use.notStartedOps} OP(s) sem MB51 (BOM cheia)` : ""}
                 </li>
               ))}

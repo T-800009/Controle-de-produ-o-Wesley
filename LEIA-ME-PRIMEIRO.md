@@ -1,4 +1,29 @@
-# MB51-65 — Importar os formulários que já existem
+# MB51-66 — BOMs do plano de produção (OEBOM) no 7000 × PROJETOS
+
+A aba **7000 × PROJETOS** ganhou o quadro **BOMs do plano de produção (OEBOM)**. Serve para os projetos que não têm OPs cadastradas: você sobe o arquivo OEBOM da China e informa quantos ônibus ainda faltam, conforme o plano de produção.
+
+## Como usar
+
+1. **Adicionar BOMs (OEBOM)** → escolha um ou vários arquivos `…-DWB1339_OEBOM_A7_V9….xlsx`.
+2. O portal lê no navegador:
+   - a aba **采购明细（统计表）BOM（Stats）**, coluna **Overseas Factory Use Total** (quantidade usada no Brasil por ônibus; peças com 0, soldadas na China, ficam fora);
+   - a aba **自制件KD清单 Self-made Part KD list** (peças KD). O mesmo material nas duas abas conta uma vez (vale a maior quantidade);
+   - modelo, DWB e revisão pelo nome do arquivo (`BC22S02 · DWB1339`, `A7_V9`).
+3. Informe os **ônibus restantes** de cada um (0 = projeto concluído) e clique **Salvar**. Mandar o mesmo DWB de novo substitui a BOM anterior.
+4. **Analisar saldo 7000**. Demanda do projeto = quantidade por ônibus × ônibus restantes. Não usa OPs nem MB51.
+5. Mudou o plano? Altere o número no card e clique **Salvar**: a análise já aberta recalcula na hora, sem ler o 7000 de novo.
+
+As BOMs do plano entram junto com as BOMs × OP, com os mesmos papéis (Em produção, Vai entrar, Fora da análise) e a mesma planilha de devolução (coluna "Ônibus restantes (plano)"). Se um DWB do plano também estiver cadastrado como BOM × OP, a tela avisa para deixar um deles **Fora da análise** e não contar duas vezes.
+
+Somente o **Administrador** cadastra, altera e apaga. O perfil Consulta vê. As BOMs do plano não aparecem no seletor da BOM × OP.
+
+Conferência com os arquivos reais (12 OEBOMs + EXPORT 7000 de 02/10/2026): 597 manter, 19 excedente, 120 devolver tudo, R$ 512.246,36 para devolver — igual à planilha de análise feita à parte.
+
+**Publicação:** igual às anteriores. Sem Secret novo e sem tabela nova (usa `datasets`/`entries` com id `plano:…`). Confirme **MB51-66** no rodapé ou `planBoms: true` em `/api/version`.
+
+---
+
+## Histórico da MB51-65 — Importar os formulários que já existem
 
 Nas duas abas (Scrap Forms e Baixa em CC) há o botão **Importar PDFs existentes**. Ele cadastra os Scrap Forms e FO.FI.C.007 feitos antes do portal: PDF do Excel, assinado no Adobe.
 
