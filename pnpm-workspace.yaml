@@ -1,0 +1,8 @@
+overrides:
+  'miniflare>sharp': 0.35.4
+strictDepBuilds: true
+allowBuilds:
+  esbuild: true
+  fsevents: true
+  sharp: true
+  workerd: true

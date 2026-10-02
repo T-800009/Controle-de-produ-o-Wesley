@@ -1,0 +1,15 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import * as XLSX from 'xlsx';
+import {joinMB51} from '../lib/mb51.ts';
+import {assembleWorkbook} from '../lib/workbook-join.ts';
+const bom=[{material:'001-A',required:5,unit:'PCS'}],ops=['19000000123','19000000124'];
+const move=(qty:any,type='261',op=ops[0],unit='PCS'):any=>({Material:'001-A',Ordem:op,Quantidade:qty,TMv:type,UMB:unit});
+test('groups SAP and OP and subtracts reversals regardless of export sign',()=>{const r=joinMB51(bom,ops,[move(-3),move(4),move(2,'262'),move(9,'261',ops[1])]);assert.equal(r.rows[0].consumption[ops[0]],5);assert.equal(r.rows[0].consumption[ops[1]],9)});
+test('retains zero and negative nets',()=>{assert.equal(joinMB51(bom,ops,[move(2),move(2,'262')]).rows[0].consumption[ops[0]],0);assert.equal(joinMB51(bom,ops,[move(2,'262')]).rows[0].consumption[ops[0]],-2)});
+test('missing quantities and incompatible units remain unknown',()=>{for(const r of [move(null),move(2,'261',ops[0],'KG')])assert.equal(joinMB51(bom,ops,[r]).rows[0].consumption[ops[0]],null)});
+test('deduplicates only a complete document identity',()=>{const r={...move(2),'Documento material':'123',Ano:'2026',Item:'1'};assert.equal(joinMB51(bom,ops,[r,r]).rows[0].consumption[ops[0]],2);assert.equal(joinMB51(bom,ops,[move(2),move(2)]).rows[0].consumption[ops[0]],4);assert.throws(()=>joinMB51(bom,ops,[r,{...r,Quantidade:3}]),/valores diferentes/)});
+test('ignores other orders, centers and movement types',()=>assert.equal(joinMB51(bom,ops,[move(7,'101'),move(4,'261','19000000999'),{...move(8),Centro:'BR01'}]).rows[0].consumption[ops[0]],0));
+test('requires movement type',()=>assert.throws(()=>joinMB51(bom,ops,[move(2,'')]),/Tipo de movimento/));
+test('builds BOM matrix from separate orders and MB51 tabs',()=>{const book=XLSX.utils.book_new();for(const [name,rows] of Object.entries({BOM:[['Material','UMB','Qtd.necessária'],['001-A','PCS',5]],Ordens:[['Modelo','Ordem'],['BC22X',ops[0]],['BC10X',ops[1]]],MB51:[['Material','Ordem','Quantidade','TMv','UMB'],['001-A',ops[0],-3,261,'PCS']]}))XLSX.utils.book_append_sheet(book,XLSX.utils.aoa_to_sheet(rows),name);const r=assembleWorkbook(book,{name:'BC22X'} as any)!;assert.deepEqual(r.rows.ops,[ops[0]]);assert.equal(r.rows.rows[0].consumption[ops[0]],3)});
+test('rejects an unrecognized order column instead of producing false zeroes',()=>assert.throws(()=>joinMB51(bom,ops,[{Material:'001-A',Quantidade:4,TMv:'261',UMB:'PCS',Outro:ops[0]}]),/Ordem/));

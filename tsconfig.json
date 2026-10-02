@@ -1,0 +1,47 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": [
+      "DOM",
+      "ES2022"
+    ],
+    "strict": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "resolveJsonModule": true,
+    "jsx": "react-jsx",
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "types": [
+      "node",
+      "@cloudflare/workers-types"
+    ],
+    "paths": {
+      "@/*": [
+        "./*"
+      ]
+    }
+  },
+  "include": [
+    "main.tsx",
+    "vite.config.ts",
+    "app/portal.tsx",
+    "components/ui/tabs.tsx",
+    "components/ui/table.tsx",
+    "components/ui/select.tsx",
+    "components/ui/dialog.tsx",
+    "components/ui/button.tsx",
+    "components/ui/sonner.tsx",
+    "lib/materials.ts",
+    "lib/usage.ts",
+    "lib/utils.ts",
+    "worker/**/*.ts",
+    "tests/*.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    "dist"
+  ]
+}

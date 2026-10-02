@@ -1,0 +1,10 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import {orderReport} from '../lib/report.ts';
+const row=(required:any,used:any)=>({id:'1',material:'001-A',unit:'PCS',required,consumption:{'000123456':used,'000987654':900}});
+test('uses only selected order and preserves SAP text',()=>{const [r]=orderReport([row(5,2)],'000123456');assert.equal(r.pending,3);assert.equal(r.consumed,2);assert.equal(r.material,'001-A');});
+test('zero consumption is known; missing quantities are not zero',()=>{assert.equal(orderReport([row(5,0)],'000123456')[0].pending,5);for(const r of [row(5,null),row(null,0),row(5,undefined),row(-1,0)])assert.equal(orderReport([r],'000123456')[0].pending,null);});
+test('excess and reversals remain distinguishable',()=>{assert.equal(orderReport([row(2,5)],'000123456')[0].pending,0);assert.equal(orderReport([row(2,-1)],'000123456')[0].reportStatus,'Estorno · conferir');});
+test('duplicate SAP lines sum BOM demand and count MB51 consumption once',()=>{const [r]=orderReport([row(5,2),row(5,2)],'000123456');assert.equal(r.required,10);assert.equal(r.consumed,2);assert.equal(r.pending,8);assert.equal(r.bomLines,2);});
+test('decimal shortages avoid floating point residue',()=>assert.equal(orderReport([row(.3,.1)],'000123456')[0].pending,.2));
+test('filtered duplicate BOM lines still use the full summed demand',()=>{const a=row(5,2),b=row(5,2);assert.equal(orderReport([a],'000123456',[a,b])[0].pending,8);});
