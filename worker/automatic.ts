@@ -5,7 +5,6 @@ import {SHEET_ID} from '../lib/materials.ts';
 import {anaColumns,type AnaSource} from '../lib/ana-columns.ts';
 import {stockColumns} from '../lib/stock-columns.ts';
 import {stockModule} from '../lib/stock-modules.ts';
-import {WRITE_OFF_SHEETS,isWriteOffHeader} from '../lib/write-offs.ts';
 const HEADER_CACHE_MS=5*60*1000;
 const mb51HeaderCache=new Map<string,{at:number;columns:string[]}>();
 const scrapHeaderCache=new Map<string,number>();
@@ -184,36 +183,4 @@ export async function automaticAnaSource(requested:string,env:GoogleEnv):Promise
  if(!response.ok){await response.body?.cancel();return Response.json({error:`Não foi possível ler a aba ${selected}. Confira se a planilha está compartilhada para leitura.`},{status:502,headers:{'Cache-Control':'no-store'}});}
  const content=response.headers.get('content-type')||'';if(content.includes('text/html')){await response.body?.cancel();return Response.json({error:`A aba ${selected} exige autorização Google.`},{status:502,headers:{'Cache-Control':'no-store'}});}
  return new Response(response.body,{headers:{...responseHeaders('gviz'),'Content-Type':content||'text/javascript;charset=utf-8','X-Source-Sheet':selected}});
-}
-
-/** BAIXA CC: lê a aba inteira (A:Z). Com a conta de serviço, usa FORMULA para
- * também receber links feitos com =HYPERLINK(). O cabeçalho é conferido antes,
- * porque o gviz devolve a primeira aba quando o nome não existe. */
-export async function automaticWriteOffs(env:GoogleEnv):Promise<Response>{
- const token=await googleToken(env);
- for(const sheet of WRITE_OFF_SHEETS){
-  const probe=token
-   ?`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${encodeURIComponent(`'${sheet}'!1:1`)}`
-   :`https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?${new URLSearchParams({tqx:'out:json',sheet,headers:'0',range:'1:1',tq:'select *'})}`;
-  const head=await fetch(probe,{headers:token?{Authorization:'Bearer '+token}:undefined,signal:AbortSignal.timeout(20000)});
-  if(!head.ok){await head.body?.cancel();continue;}
-  let headers:unknown[]|undefined;
-  try{
-   const text=await head.text(),match=token?null:text.match(/setResponse\(([\s\S]*)\);?\s*$/);
-   if(!token&&!match)continue;
-   const body=JSON.parse(token?text:match![1]);
-   headers=token?body.values?.[0]:body.table?.rows?.[0]?.c?.map((c:any)=>c?.v??'');
-  }catch{continue;}
-  if(!Array.isArray(headers)||!isWriteOffHeader(headers))continue;
-  const url=token
-   ?`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${encodeURIComponent(`'${sheet}'!A:Z`)}?${new URLSearchParams({majorDimension:'ROWS',valueRenderOption:'FORMULA'})}`
-   :`https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?${new URLSearchParams({tqx:'out:json',sheet,headers:'1',tq:'select *'})}`;
-  const response=await fetch(url,{headers:token?{Authorization:'Bearer '+token}:undefined,signal:AbortSignal.timeout(25000)});
-  if(!response.ok||(response.headers.get('content-type')||'').includes('text/html')){
-   await response.body?.cancel();
-   return Response.json({error:`Não foi possível ler a aba ${sheet}. Confira o acesso à planilha.`},{status:502,headers:{'Cache-Control':'no-store'}});
-  }
-  return new Response(response.body,{headers:{...responseHeaders(token?'sheets-api':'gviz'),'Content-Type':response.headers.get('content-type')||'application/json','X-Source-Sheet':encodeURIComponent(sheet)}});
- }
- return Response.json({error:'Crie na planilha uma aba chamada BAIXA CC com as colunas Data, Documento, Centro de custo, Material, Quantidade, Valor, Motivo e PDF (link do Drive).',code:'WRITE_OFF_SHEET_MISSING'},{status:422,headers:{'Cache-Control':'no-store'}});
 }

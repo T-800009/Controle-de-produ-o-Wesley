@@ -542,41 +542,7 @@ html { scroll-padding-top: 92px; }
 .shell .op-complete-row .manual-toggle:disabled{opacity:1;color:#86d9b0;border-color:#56bd8b80;background:#56bd8b14}
 .shell .op-complete-row .manual-toggle:disabled .manual-toggle-mark{color:#86d9b0}
 
-/* MB51-61 · BAIXA CC (baixas de centro de custo com PDF do Drive). */
-.shell .write-offs{padding:6px 24px 16px;min-width:0}
-.shell .write-offs>.notice{margin:12px 0}
-.shell .write-offs>.notice p{margin:6px 0 0;line-height:1.6}
-.write-off-metrics .write-off-money{font-size:clamp(17px,4.6vw,26px);letter-spacing:-.5px;overflow-wrap:anywhere}
-.shell .warehouse-filters.write-off-filters{grid-template-columns:minmax(220px,2fr) repeat(3,minmax(140px,1fr))}
-.write-off-centers{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px;margin:18px 0}
-.shell .write-off-centers button{display:flex;flex-direction:column;align-items:flex-start;gap:3px;padding:12px 14px;border:1px solid var(--ui-line);border-radius:8px;background:#ffffff04;text-align:left;min-width:0}
-.shell .write-off-centers button[aria-pressed="true"]{border-color:#ead18b;background:#dfbb4212}
-.write-off-centers b{font-size:13px}
-.write-off-centers span{font-size:11px;color:var(--ui-muted);max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.write-off-centers strong{font-size:14px;font-variant-numeric:tabular-nums;color:#ead18b}
-.shell .write-off-table table{min-width:1040px}
-.shell .write-off-table th:first-child,.shell .write-off-table td:first-child{width:15%;min-width:150px}
-.shell .write-off-table th:nth-child(2){width:14%}
-.shell .write-off-table th:nth-child(3){width:24%}
-.shell .write-off-table th:nth-child(4),.shell .write-off-table th:nth-child(5){width:10%}
-.shell .write-off-table th:nth-child(6){width:17%}
-.shell .write-off-table th:last-child{width:10%}
-.shell .write-off-table.warehouse-table .table-scroll-body th:nth-child(3),.shell .write-off-table.warehouse-table .table-scroll-body th:nth-child(6){text-align:left}
-.shell .write-off-table.warehouse-table .table-scroll-body th:nth-child(4),.shell .write-off-table.warehouse-table .table-scroll-body th:nth-child(5){text-align:right}
-.write-off-table td.num{text-align:right}
-.write-off-reason{font-size:12px;line-height:1.5;color:#d6e0ea}
-.shell .write-off-pdf{display:inline-flex;align-items:center;gap:6px;padding:7px 10px;border:1px solid #ffffff33;border-radius:7px;color:#edf2f7;background:#ffffff08;font-size:12px;text-decoration:none;white-space:nowrap}
-.shell .write-off-pdf:hover{background:#ffffff14}
-.write-off-missing{color:#f0a2a7!important}
-.write-off-viewer{max-width:min(1100px,96vw)!important;width:96vw;height:min(92dvh,900px);display:flex!important;flex-direction:column}
-.write-off-viewer iframe{flex:1;width:100%;min-height:320px;border:1px solid #ffffff22;border-radius:8px;background:#fff}
-.write-off-viewer-note{font-size:12px;color:#a5b0be;margin:0}
-.write-off-viewer-note a{color:#d6e7f8}
-@media (max-width:850px){.shell .warehouse-filters.write-off-filters{grid-template-columns:repeat(2,minmax(0,1fr))}.shell .warehouse-filters.write-off-filters label:first-child{grid-column:1/-1}}
-@media (max-width:560px){.shell .write-offs{padding-inline:12px}.shell .warehouse-filters.write-off-filters{grid-template-columns:minmax(0,1fr)}}
 /* MB51-62 · SCRAP FORM (preencher, gerar PDF para assinatura, conferir assinaturas). */
-.shell .scrap-tabs{margin:0 0 16px}
-.shell .scrap-tabs button{display:inline-flex;align-items:center;gap:7px}
 .shell .scrap-forms{padding:6px 24px 20px;min-width:0}
 .shell .scrap-forms>.notice{margin:12px 0}
 .shell .warehouse-filters.scrap-filters{grid-template-columns:minmax(240px,2fr) repeat(2,minmax(160px,1fr))}

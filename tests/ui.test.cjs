@@ -1121,54 +1121,14 @@ test('perfil consulta não vê o botão Tudo OK',async t=>{
  ui.assertHealthy();
 });
 
-// MB51-61 · BAIXA CC no lugar do 1300
-const WRITE_OFF_HEADER=['Data','Documento','Centro de custo','Descrição do centro de custo','Material','Descrição','Quantidade','UMB','Valor','Motivo','PDF'];
-function writeOffApi(rows,{missing=false}={}){
- return url=>{
-  if(url.pathname==='/api/automatic'&&url.searchParams.get('id')==='baixas'){
-   if(missing)return Response.json({error:'Crie na planilha uma aba chamada BAIXA CC com as colunas Data, Documento, Centro de custo, Material, Quantidade, Valor, Motivo e PDF (link do Drive).'},{status:422});
-   const response=gviz(WRITE_OFF_HEADER,rows);response.headers.set('X-Source-Sheet','BAIXA%20CC');return response;
-  }
-  if(url.pathname==='/api/scrap-forms')return Response.json({forms:[],canEdit:false,canDelete:false,role:'viewer'});
-  return apiResponse(url);
- };
-}
-async function openSheetView(ui){
- await ui.settle(()=>ui.container.querySelector('.scrap-forms'));
- await ui.click('.scrap-tabs button','PDFs da planilha (BAIXA CC)');
-}
-test('BAIXA CC lista as baixas, filtra por centro de custo e abre o PDF do Drive dentro do site',async t=>{
- const drive='https://drive.google.com/file/d/1AbCdEfGhIjKlMnOpQrStUvWxYz/view?usp=sharing';
- const ui=await mount(t,{url:'https://portal.test/?modulo=baixas',respond:writeOffApi([
-  ['Date(2026,8,30)','FO-002','CC2002','Pintura','001-A','Arruela',2,'PCS',10,'Avaria',drive],
-  ['Date(2026,8,15)','FO-001','CC1001','Montagem','11242550-00','TIRRENO',15,'KG',1250.5,'Vazamento','javascript:alert(1)'],
- ])});
- assert.equal(ui.requests.filter(url=>url==='/api/automatic?id=baixas').length,0,'A planilha só é lida ao abrir a visão dela');
- await openSheetView(ui);
- await ui.settle(()=>ui.container.querySelectorAll('.write-off-table tbody tr').length===2);
+// MB51-63 · a aba SCRAP FORM não lê mais a planilha (a aba BAIXA CC fica só no Sheets).
+test('SCRAP FORM abre direto nos formulários e nunca lê a aba BAIXA CC',async t=>{
+ const ui=await mount(t,{url:'https://portal.test/?modulo=baixas',respond:url=>url.pathname==='/api/scrap-forms'?Response.json({forms:[],canEdit:false,canDelete:false,role:'viewer'}):apiResponse(url)});
+ await ui.settle(()=>ui.container.querySelector('.scrap-forms .empty'));
  assert.equal(ui.container.querySelector('h1').textContent,'SCRAP FORM');
  assert.equal(ui.container.querySelector('.main-nav [aria-selected="true"]').textContent,'SCRAP FORM');
- assert.match(ui.container.querySelector('.write-off-metrics').textContent,/Baixas\s*2/);
- assert.match(ui.container.querySelector('.write-off-money').textContent,/1\.260,50/);
- const rows=[...ui.container.querySelectorAll('.write-off-table tbody tr')];
- assert.match(rows[0].textContent,/30\/09\/2026.*FO-002/);
- assert.equal(rows[1].querySelector('a[href^="javascript"]'),null,'Link perigoso nunca vira link');
- assert.match(rows[1].textContent,/Link inválido/);
- const select=ui.container.querySelector('select[aria-label="Centro de custo"]');
- await act(async()=>{select.value='CC1001';select.dispatchEvent(new Event('change',{bubbles:true}));});
- assert.equal(ui.container.querySelectorAll('.write-off-table tbody tr').length,1);
- await act(async()=>{select.value='all';select.dispatchEvent(new Event('change',{bubbles:true}));});
- await ui.click('.write-off-pdf','Ver PDF');
- await ui.settle(()=>document.querySelector('.write-off-viewer iframe'));
- assert.equal(document.querySelector('.write-off-viewer iframe').getAttribute('src'),'https://drive.google.com/file/d/1AbCdEfGhIjKlMnOpQrStUvWxYz/preview');
- assert.equal(ui.requests.filter(url=>url==='/api/automatic?id=baixas').length,1,'Uma leitura ao abrir');
- ui.assertHealthy();
-});
-test('sem a aba BAIXA CC, a tela explica como montar a planilha',async t=>{
- const ui=await mount(t,{url:'https://portal.test/?modulo=baixas',respond:writeOffApi([],{missing:true})});
- await openSheetView(ui);
- await ui.settle(()=>ui.container.querySelector('.write-offs [role="alert"]'));
- assert.match(ui.container.querySelector('.write-offs [role="alert"]').textContent,/Crie na planilha uma aba chamada BAIXA CC.*Centro de custo e Documento \(ou PDF\) são obrigatórios/);
+ assert.equal(ui.container.querySelector('.scrap-tabs'),null,'Sem a visão da planilha');
+ assert.equal(ui.requests.some(url=>url.startsWith('/api/automatic')),false,'Nenhuma leitura do Google Sheets');
  ui.assertHealthy();
 });
 

@@ -1,4 +1,4 @@
-import { lazy, Suspense, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import {
   CheckCircle2,
   Clock3,
@@ -52,12 +52,10 @@ import {
 } from "@/lib/scrap-form";
 import type { ScrapPdfReading } from "@/lib/scrap-pdf";
 
-const WriteOffs = lazy(() => import("./write-offs"));
 const pdfTools = () => import("@/lib/scrap-pdf");
 
 const APPROVERS_KEY = "wbyd:scrap:responsaveis";
 const EMAIL_KEY = { signing: "wbyd:scrap:email-assinatura", signed: "wbyd:scrap:email-final" } as const;
-const VIEW_KEY = "wbyd:scrap:visao";
 const store = {
   get(key: string) {
     try {
@@ -133,46 +131,7 @@ const formLink = (form: ScrapForm) => {
 /* ------------------------------------------------------------------------ */
 
 export default function ScrapForms() {
-  // Um link de formulário (?scrap=) sempre abre a lista de formulários.
-  const [view, setView] = useState(() => {
-    try {
-      if (new URLSearchParams(location.search).has("scrap")) return "formularios";
-    } catch {
-      // Sem endereço.
-    }
-    return store.get(VIEW_KEY) === "planilha" ? "planilha" : "formularios";
-  });
-  function choose(next: string) {
-    setView(next);
-    store.set(VIEW_KEY, next);
-  }
-  return (
-    <div className="scrap-module">
-      <nav className="view-tabs scrap-tabs" aria-label="Visualização das baixas">
-        <button aria-pressed={view === "formularios"} onClick={() => choose("formularios")}>
-          <FileText size={15} />
-          Scrap Forms
-        </button>
-        <button aria-pressed={view === "planilha"} onClick={() => choose("planilha")}>
-          PDFs da planilha (BAIXA CC)
-        </button>
-      </nav>
-      {view === "formularios" ? (
-        <ScrapFormList />
-      ) : (
-        <Suspense
-          fallback={
-            <div className="empty panel" role="status">
-              <RefreshCw className="spin" />
-              <h3>Abrindo a planilha BAIXA CC…</h3>
-            </div>
-          }
-        >
-          <WriteOffs />
-        </Suspense>
-      )}
-    </div>
-  );
+  return <ScrapFormList />;
 }
 
 function SignaturePills({ form }: { form: Pick<ScrapForm, "data" | "signatures" | "status"> }) {

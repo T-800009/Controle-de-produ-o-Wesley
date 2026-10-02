@@ -1,4 +1,12 @@
-# MB51-62 — SCRAP FORM: preencher, gerar o PDF para assinatura e guardar o PDF assinado
+# MB51-63 — SCRAP FORM sem leitura da planilha
+
+- O portal **não lê mais a aba BAIXA CC** do Google Sheets. A aba continua na planilha, do jeito que está; o portal só não depende dela.
+- Saíram o botão "PDFs da planilha (BAIXA CC)", a rota que lia a aba e o arquivo `BAIXA_CC_modelo.xlsx`.
+- Os Scrap Forms e os PDFs (gerado e assinados) ficam guardados no próprio portal, como na MB51-62.
+
+---
+
+## Histórico da MB51-62 — SCRAP FORM: preencher, gerar o PDF para assinatura e guardar o PDF assinado
 
 A aba **BAIXA CC** virou **SCRAP FORM**. O link antigo (`?modulo=baixas`) continua funcionando. A leitura da aba BAIXA CC da planilha continua disponível no botão **PDFs da planilha (BAIXA CC)**.
 
