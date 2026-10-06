@@ -1,7 +1,7 @@
 import type {PortalDatabase} from './database';
 import type {PortalRole} from './auth';
 import {initial,ensureSchema} from './storage';
-import {MAX_PDF_BYTES,isIsoDate,isTranscription,sanitizeFormData,sanitizeSignatures,statusFromSignatures,type DocKind,type ScrapFileMeta,type ScrapForm,type ScrapSignature,type ScrapStatus} from '../lib/scrap-form';
+import {MAX_PDF_BYTES,acceptOriginal,importedMatch,isIsoDate,isTranscription,sanitizeFormData,sanitizeSignatures,statusFromSignatures,type DocKind,type ScrapFileMeta,type ScrapForm,type ScrapSignature,type ScrapStatus} from '../lib/scrap-form';
 import {sanitizeCcData,type CcForm} from '../lib/cc-form';
 
 /**
@@ -129,9 +129,11 @@ export async function importScrapForm(db:PortalDatabase,payload:{data?:unknown;n
  const {clean,bytes}=decodeBase64(payload.pdf);
  if(bytes.length>MAX_PDF_BYTES)throw new ScrapError('O PDF passa de 1,5 MB e não cabe no portal.',413);
  if(!countBytes(bytes.subarray(0,1024),'%PDF-'))throw new ScrapError('O arquivo enviado não é um PDF.');
- const signatures=valid(()=>sanitizeSignatures(payload.signatures));
- if(!signatures.length)throw new ScrapError('Este PDF não tem nenhuma assinatura digital: cadastre como rascunho.');
- if(countBytes(bytes,'/ByteRange')<signatures.filter(signature=>signature.check==='valid').length)throw new ScrapError('O arquivo não tem as assinaturas informadas.');
+ const read=valid(()=>sanitizeSignatures(payload.signatures));
+ if(!read.length)throw new ScrapError('Este PDF não tem nenhuma assinatura digital: cadastre como rascunho.');
+ if(countBytes(bytes,'/ByteRange')<read.length)throw new ScrapError('O arquivo não tem as assinaturas informadas.');
+ // Quem assinou o PDF antigo conta como assinado, mesmo que o arquivo tenha sido regravado depois.
+ const signatures=acceptOriginal(read);
  const name=safeName(payload.name,'formulario-importado.pdf');
  const data=valid(()=>(sanitize as (input:unknown)=>any)({...(payload.data&&typeof payload.data==='object'?payload.data:{}),source:name}));
  const hash=await sha256(bytes);
@@ -139,7 +141,7 @@ export async function importScrapForm(db:PortalDatabase,payload:{data?:unknown;n
  if(repeated)throw new ScrapError(`Este PDF já está no portal${repeated.number?` (${repeated.number})`:''}.`,409);
  const status=statusFromSignatures(data,signatures,kind);
  const stamp=now.toISOString(),id=crypto.randomUUID(),year=brazilYear(now);
- const latest=signatures.filter(signature=>signature.check==='valid').map(signature=>signature.signedAt||'').sort().at(-1);
+ const latest=signatures.map(signature=>signature.signedAt||'').sort().at(-1);
  const signedAt=status==='signed'?latest||stamp:null;
  const statements=[
   db.prepare(`INSERT INTO ${counters}(year,seq) VALUES(?,(SELECT COALESCE(MAX(seq),0)+1 FROM ${forms} WHERE year=?)) ON CONFLICT(year) DO UPDATE SET seq=${counters}.seq+1`).bind(year,year),
@@ -250,6 +252,8 @@ export async function uploadScrapPdf(db:PortalDatabase,payload:{id?:unknown;revi
   if(latest&&latest.sha256===hash)throw new ScrapError('Este PDF é igual à versão atual. Anexe o arquivo devolvido com a nova assinatura.',409);
   signatures=valid(()=>sanitizeSignatures(payload.signatures));
   if(!signatures.length)throw new ScrapError('Este PDF não tem nenhuma assinatura digital.');
+  // Assinatura aceita sem conferência só a que veio na importação do próprio formulário.
+  if(!importedMatch(signatures,isTranscription(form)?form.signatures:[]))throw new ScrapError('Leitura de assinaturas inválida.');
   // Conferência barata: cada assinatura conferida no navegador tem um /ByteRange no arquivo.
   const checked=signatures.filter(signature=>signature.check==='valid').length;
   if(countBytes(bytes,'/ByteRange')<checked)throw new ScrapError('O arquivo não tem as assinaturas informadas. Anexe de novo o PDF assinado.');

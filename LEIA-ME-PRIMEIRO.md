@@ -1,4 +1,14 @@
-# MB51-66 — BOMs do plano de produção (OEBOM) no 7000 × PROJETOS
+# MB51-67 — Importação sem aviso de "regravado" e PR/PO em qualquer formulário
+
+- **Importar PDFs existentes:** quem assinou o PDF antigo conta como assinado, mesmo que o arquivo tenha sido regravado depois. Saíram da importação os avisos de "não confere", "alterações depois da última assinatura" e "ID autoassinado". Quando alguém assina de novo um formulário importado, só essa assinatura nova é conferida.
+- **PR, Data da PR, PO, centro de custo e Doc. SAP:**
+  - **Rascunho** (inclusive um Scrap Form novo): o quadro **Reposição e baixa no SAP** aparece e salva junto com **Salvar rascunho**.
+  - **Formulário importado:** salva com **Salvar dados**.
+  - **Formulário emitido pelo portal:** ao mudar algum campo aparece **Salvar PR e PO** no rodapé. Na Baixa em CC, o botão é **Salvar Doc SAP**.
+
+---
+
+## Histórico da MB51-66 — BOMs do plano de produção (OEBOM) no 7000 × PROJETOS
 
 A aba **7000 × PROJETOS** ganhou o quadro **BOMs do plano de produção (OEBOM)**. Serve para os projetos que não têm OPs cadastradas: você sobe o arquivo OEBOM da China e informa quantos ônibus ainda faltam, conforme o plano de produção.
 

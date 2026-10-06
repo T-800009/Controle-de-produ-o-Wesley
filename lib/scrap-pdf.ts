@@ -730,7 +730,16 @@ export async function readScrapPdf(bytes: Uint8Array, { maxBytes = MAX_PDF_BYTES
       !!contents &&
       gapMatches(bytes, b, c, contents);
     if (!validRange || !contents) {
-      signatures.push({ ...base, check: "invalid", detail: "O arquivo foi regravado depois desta assinatura (por exemplo, salvo em outro programa). No Adobe ela aparece como inválida: é preciso assinar de novo." });
+      // Quem assinou continua no certificado, mesmo sem dar para conferir o conteúdo.
+      let who = { signer: nameInAdobe, signedAt: base.signedAt };
+      if (contents)
+        try {
+          const parsed = await checkCmsSignature(contents, new Uint8Array(0));
+          who = { signer: parsed.signer || nameInAdobe, signedAt: base.signedAt || parsed.signingTime };
+        } catch {
+          // Assinatura ilegível: fica o nome informado no Adobe.
+        }
+      signatures.push({ ...base, ...who, check: "invalid", detail: "O arquivo foi regravado depois desta assinatura (por exemplo, salvo em outro programa). No Adobe ela aparece como inválida: é preciso assinar de novo." });
       continue;
     }
     // A mesma assinatura apontada por dois campos não vale duas vezes.

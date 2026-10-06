@@ -83,7 +83,8 @@ export type ScrapFormData = {
   source?: string;
 };
 /** valid: conferida (conteúdo e criptografia). invalid: não confere. unchecked: não deu para conferir. */
-export type SignatureCheck = "valid" | "invalid" | "unchecked";
+/** imported: assinatura que veio no PDF de um formulário importado; conta como feita, sem conferir se o arquivo foi regravado. */
+export type SignatureCheck = "valid" | "invalid" | "unchecked" | "imported";
 export type ScrapSignature = {
   field: string;
   slot: SlotId | null;
@@ -282,7 +283,17 @@ export function slotFromFieldName(name: string): SlotId | null {
 export const isSlotId = (value: unknown): value is SlotId => ALL_SLOTS.some((slot) => slot.id === value);
 
 /** Só uma assinatura conferida preenche um quadro. */
-const accepted = (signature: ScrapSignature) => signature.check === "valid";
+export const accepted = (signature: ScrapSignature) => signature.check === "valid" || signature.check === "imported";
+const ORIGINAL = "Assinatura do PDF original (importado).";
+/** Importação: quem assinou o PDF antigo conta como assinado, mesmo que o arquivo tenha sido regravado depois. */
+export const acceptOriginal = (signatures: ScrapSignature[]): ScrapSignature[] => signatures.map((signature) => ({ ...signature, check: "imported", detail: ORIGINAL }));
+const sameSignature = (a: ScrapSignature, b: ScrapSignature) => a.field === b.field && a.signer === b.signer && a.signedAt === b.signedAt;
+/** PDF novo de um formulário importado: as assinaturas que vieram na importação continuam aceitas; as novas são conferidas. */
+export const keepOriginal = (signatures: ScrapSignature[], previous: ScrapSignature[]): ScrapSignature[] =>
+  signatures.map((signature) => (previous.some((old) => old.check === "imported" && sameSignature(old, signature)) ? { ...signature, check: "imported", detail: ORIGINAL } : signature));
+/** Toda assinatura "imported" que chega tem de ser uma das que vieram na importação. */
+export const importedMatch = (signatures: ScrapSignature[], previous: ScrapSignature[]) =>
+  signatures.every((signature) => signature.check !== "imported" || previous.some((old) => old.check === "imported" && sameSignature(old, signature)));
 export type SlotProgress = { slot: Slot; required: boolean; signature: ScrapSignature | null; expected: string };
 type ProgressData = { approvers: Record<string, string>; items: unknown[] };
 export function signatureProgress(data: ProgressData, signatures: ScrapSignature[], kind: DocKind = "scrap") {
@@ -314,7 +325,8 @@ export function signatureProgress(data: ProgressData, signatures: ScrapSignature
   for (const [signer, labels] of bySigner)
     if (labels.length > 1) issues.push(`A mesma pessoa (${signer}) assinou ${labels.join(" e ")}. Confira se está certo.`);
   const latest = signatures.filter(accepted).sort((a, b) => String(b.signedAt || "").localeCompare(String(a.signedAt || "")))[0];
-  if (signatures.length && !signatures.some((signature) => signature.coversWholeFile))
+  // Formulário importado: alterações antigas no arquivo não interessam.
+  if (signatures.length && !signatures.some((signature) => signature.coversWholeFile) && !signatures.some((signature) => signature.check === "imported"))
     issues.push(
       `O arquivo recebeu alterações depois da última assinatura${latest?.signer ? ` (${latest.signer})` : ""}. Confira no Adobe se as assinaturas aparecem como válidas.`,
     );
@@ -327,7 +339,7 @@ export function statusFromSignatures(data: ProgressData, signatures: ScrapSignat
 /** Valida o resultado da leitura das assinaturas que chega da tela. */
 export function sanitizeSignatures(input: unknown): ScrapSignature[] {
   if (!Array.isArray(input) || input.length > 20) throw Error("Leitura de assinaturas inválida.");
-  const checks = new Set(["valid", "intact", "invalid", "unchecked"]);
+  const checks = new Set(["valid", "intact", "invalid", "unchecked", "imported"]);
   return input.map((raw: any) => {
     if (!raw || typeof raw !== "object" || !checks.has(raw.check)) throw Error("Leitura de assinaturas inválida.");
     const signedAt = typeof raw.signedAt === "string" && !Number.isNaN(Date.parse(raw.signedAt)) ? new Date(raw.signedAt).toISOString() : null;

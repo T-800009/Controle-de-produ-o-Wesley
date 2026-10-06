@@ -5,7 +5,7 @@ import { PDFDocument, PDFName, PDFString } from "pdf-lib";
 import { pageText } from "../lib/pdf-text.ts";
 import { dateOrder, fileDate, legacyMoney, legacyQuantity, parseLegacyCc, parseLegacyScrap, readLegacyPdf } from "../lib/legacy-import.ts";
 import { legacySlots, readScrapPdf, compareWithGenerated } from "../lib/scrap-pdf.ts";
-import { pdfProblems, signatureProgress } from "../lib/scrap-form.ts";
+import { acceptOriginal, importedMatch, keepOriginal, pdfProblems, signatureProgress } from "../lib/scrap-form.ts";
 import { ccProblems } from "../lib/cc-form.ts";
 
 // PDFs de teste no formato dos formulários antigos (planilha → PDF), com nomes fictícios.
@@ -146,4 +146,31 @@ test("posição dos campos: referência pelo nome do portal, fora da página ou 
   // FO.FI.C.007: de cima para baixo.
   assert.deepEqual(legacySlots([at(600, 300), at(600, 400), at(602, 200)], box, "cc"), ["manager", "requester", "scm"]);
   assert.deepEqual(legacySlots([{ slot: null, center: null }], box, "scrap"), [null]);
+});
+
+test("PDF antigo regravado: quem assinou conta como assinado, sem aviso de arquivo alterado", async () => {
+  const data = { approvers: { production: "Pessoa Producao", quality: "Pessoa Qualidade", logistics: "Pessoa Logistica", finance: "Pessoa Financeiro" }, items: [{ classification: "B" }] };
+  const rewritten = await readScrapPdf(fixture("legado-scrap-regravado.pdf"), { legacy: true, kind: "scrap" });
+  assert.deepEqual(
+    rewritten.signatures.map((entry) => [entry.slot, entry.signer, entry.check]),
+    [
+      ["production", "Pessoa Producao", "invalid"],
+      ["quality", "Pessoa Qualidade", "invalid"],
+      ["logistics", "Pessoa Logistica", "invalid"],
+    ],
+    "O nome vem do certificado mesmo com o arquivo regravado",
+  );
+  const imported = acceptOriginal(rewritten.signatures);
+  const progress = signatureProgress(data, imported, "scrap");
+  assert.deepEqual(progress.missing.map((entry) => entry.slot.id), ["finance"]);
+  assert.deepEqual(progress.issues, [], "Nada de regravado, autoassinado ou alterado depois");
+  // A Rosy assina depois: as assinaturas da importação continuam; a nova é conferida.
+  const later = [...rewritten.signatures, { ...rewritten.signatures[0], field: "Assinatura_Financeiro", slot: "finance" as const, signer: "Pessoa Financeiro", check: "valid" as const, signedAt: "2026-10-06T12:00:00.000Z", coversWholeFile: true }];
+  const kept = keepOriginal(later, imported);
+  assert.deepEqual(kept.map((entry) => entry.check), ["imported", "imported", "imported", "valid"]);
+  assert.equal(signatureProgress(data, kept, "scrap").complete, true);
+  const bad = keepOriginal([{ ...later[3], check: "invalid" }], imported);
+  assert.equal(bad[0].check, "invalid", "Assinatura nova inválida não vira importada");
+  assert.equal(importedMatch(kept, imported), true);
+  assert.equal(importedMatch([{ ...later[3], check: "imported" }], imported), false, "Só as que vieram na importação");
 });

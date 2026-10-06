@@ -40,8 +40,11 @@ import {
   emptyForm,
   emptyItem,
   formHistory,
+  accepted,
+  acceptOriginal,
   formTotal,
   isTranscription,
+  keepOriginal,
   itemTotal,
   materialCode,
   parseBrNumber,
@@ -942,7 +945,9 @@ function DialogFooter({
   onClose,
   onSave,
   onGenerate,
+  pending = null,
 }: {
+  pending?: { label: string; onClick: () => void } | null;
   form: AnyForm | null;
   canEdit: boolean;
   canDelete: boolean;
@@ -973,6 +978,13 @@ function DialogFooter({
       <button disabled={!!busy} onClick={onClose}>
         Fechar
       </button>
+      {pending && (
+        // Campo salvo à parte (PR/PO, Doc SAP) alterado: o botão fica à vista no rodapé.
+        <button className="primary" disabled={!!busy} onClick={pending.onClick}>
+          <Save size={16} />
+          {busy === "posting" ? "Salvando…" : pending.label}
+        </button>
+      )}
       {editable && form && form.status !== "draft" && (
         // Importado: só os dados (transcrição do PDF) mudam; o PDF assinado continua o mesmo.
         <button className="primary" disabled={!!busy || !dirty} onClick={onSave}>
@@ -1014,7 +1026,10 @@ function SignatureSection<F extends AnyForm>({ kind, form, canEdit, runner, onSa
       const bytes = new Uint8Array(await file.arrayBuffer());
       const { readScrapPdf } = await pdfTools();
       // Formulário importado (PDF feito no Excel): os campos valem pela posição na linha de assinaturas.
-      const reading = await readScrapPdf(bytes, { legacy: isTranscription(form), kind });
+      const legacy = isTranscription(form);
+      const read = await readScrapPdf(bytes, { legacy, kind });
+      // Importado: as assinaturas que vieram na importação continuam valendo; as novas são conferidas.
+      const reading = legacy ? { ...read, signatures: keepOriginal(read.signatures, form.signatures) } : read;
       setReview(await reviewUpload(kind, form, file.name, bytes, reading));
     });
     if (fileInput.current) fileInput.current.value = "";
@@ -1315,7 +1330,8 @@ function ScrapFormDialog({
     change({ ...data, items: data.items.map((item, i) => (i === index ? { ...item, ...patch } : item)) });
   }
   function close() {
-    if (editable && dirty && data.items.some((item) => item.material || item.defect) && !window.confirm("Fechar sem salvar as alterações deste formulário?")) return;
+    const unsaved = (editable && dirty && data.items.some((item) => item.material || item.defect)) || (!editable && !!form && JSON.stringify(posting) !== JSON.stringify(postingOf(form.data)));
+    if (unsaved && !window.confirm("Fechar sem salvar as alterações deste formulário?")) return;
     onClose();
   }
   async function saveDraft(): Promise<ScrapForm | undefined> {
@@ -1367,6 +1383,10 @@ function ScrapFormDialog({
 
   const missingByItem = useMemo(() => (showProblems ? data.items.map(missingFields) : []), [showProblems, data]);
   const title = form ? `${form.number} · ${STATUS_LABEL[form.status]}` : "Novo Scrap Form";
+  // PR/PO: num rascunho ou importado fazem parte dos dados; num formulário emitido pelo portal, salvam à parte.
+  const postingValues = editable ? postingOf(data) : posting;
+  const setPostingField = (key: keyof ReturnType<typeof postingOf>, value: string) => (editable ? change({ ...data, [key]: value }) : setPosting({ ...posting, [key]: value }));
+  const postingDirty = !editable && !!form && JSON.stringify(posting) !== JSON.stringify(postingOf(form.data));
 
   return (
     <Dialog open onOpenChange={(open) => !open && close()}>
@@ -1471,42 +1491,40 @@ function ScrapFormDialog({
           </fieldset>
         </section>
 
-        {form && form.status !== "draft" && (
-          <section className="scrap-section" aria-label="Reposição e baixa no SAP">
-            <div className="scrap-section-head">
-              <h4>Reposição e baixa no SAP</h4>
-              <span>Fica só no portal, não altera o PDF assinado</span>
-            </div>
-            <fieldset className="scrap-approvers scrap-posting scrap-fieldset" disabled={!canEdit || !!busy}>
-              <label>
-                PR
-                <input value={posting.pr} maxLength={30} inputMode="numeric" placeholder="6000014878" onChange={(e) => setPosting({ ...posting, pr: e.target.value })} />
-              </label>
-              <label>
-                Data da PR
-                <input type="date" value={posting.prDate} onChange={(e) => setPosting({ ...posting, prDate: e.target.value })} />
-              </label>
-              <label>
-                PO
-                <input value={posting.po} maxLength={30} inputMode="numeric" placeholder="9900029259" onChange={(e) => setPosting({ ...posting, po: e.target.value })} />
-              </label>
-              <label>
-                Centro de custo
-                <input value={posting.costCenter} maxLength={40} onChange={(e) => setPosting({ ...posting, costCenter: e.target.value })} />
-              </label>
-              <label>
-                Documento SAP da baixa
-                <input value={posting.sapDocument} maxLength={40} onChange={(e) => setPosting({ ...posting, sapDocument: e.target.value })} />
-              </label>
-              {canEdit && (
-                <button disabled={JSON.stringify(posting) === JSON.stringify(postingOf(form.data))} onClick={savePosting}>
-                  <Save size={16} />
-                  Salvar
-                </button>
-              )}
-            </fieldset>
-          </section>
-        )}
+        <section className="scrap-section" aria-label="Reposição e baixa no SAP">
+          <div className="scrap-section-head">
+            <h4>Reposição e baixa no SAP</h4>
+            <span>{editable ? (form && form.status !== "draft" ? "Salva com Salvar dados" : "Salva junto com o rascunho") : "Fica só no portal, não altera o PDF assinado"}</span>
+          </div>
+          <fieldset className="scrap-approvers scrap-posting scrap-fieldset" disabled={!canEdit || !!busy}>
+            <label>
+              PR
+              <input value={postingValues.pr} maxLength={30} inputMode="numeric" placeholder="6000014878" onChange={(e) => setPostingField("pr", e.target.value)} />
+            </label>
+            <label>
+              Data da PR
+              <input type="date" value={postingValues.prDate} onChange={(e) => setPostingField("prDate", e.target.value)} />
+            </label>
+            <label>
+              PO
+              <input value={postingValues.po} maxLength={30} inputMode="numeric" placeholder="9900029259" onChange={(e) => setPostingField("po", e.target.value)} />
+            </label>
+            <label>
+              Centro de custo
+              <input value={postingValues.costCenter} maxLength={40} onChange={(e) => setPostingField("costCenter", e.target.value)} />
+            </label>
+            <label>
+              Documento SAP da baixa
+              <input value={postingValues.sapDocument} maxLength={40} onChange={(e) => setPostingField("sapDocument", e.target.value)} />
+            </label>
+            {canEdit && !editable && (
+              <button disabled={!postingDirty} onClick={savePosting}>
+                <Save size={16} />
+                Salvar
+              </button>
+            )}
+          </fieldset>
+        </section>
 
         {form && <FileHistory kind="scrap" form={form} runner={runner} />}
         {showProblems && editable && <Problems problems={problems} />}
@@ -1528,6 +1546,7 @@ function ScrapFormDialog({
             })
           }
           onGenerate={generate}
+          pending={postingDirty && canEdit ? { label: "Salvar PR e PO", onClick: savePosting } : null}
         />
       </DialogContent>
     </Dialog>
@@ -1881,7 +1900,8 @@ function CcFormDialog({
     change({ ...data, items: data.items.map((item, i) => (i === index ? { ...item, ...patch } : item)) });
   }
   function close() {
-    if (editable && dirty && data.items.some((item) => item.material || item.description) && !window.confirm("Fechar sem salvar as alterações desta baixa?")) return;
+    const unsaved = (editable && dirty && data.items.some((item) => item.material || item.description)) || (!editable && !!form && sapDocument !== form.data.sapDocument);
+    if (unsaved && !window.confirm("Fechar sem salvar as alterações desta baixa?")) return;
     onClose();
   }
   function includePicked() {
@@ -2135,14 +2155,18 @@ function CcFormDialog({
           <section className="scrap-section" aria-label="Baixa no SAP">
             <div className="scrap-section-head">
               <h4>Baixa no SAP</h4>
-              <span>Fica só no portal, não altera o PDF assinado</span>
+              <span>{editable ? "Salva com Salvar dados" : "Fica só no portal, não altera o PDF assinado"}</span>
             </div>
             <fieldset className="scrap-approvers cc-posting scrap-fieldset" disabled={!canEdit || !!busy}>
               <label>
                 Documento SAP da baixa
-                <input value={sapDocument} maxLength={40} onChange={(e) => setSapDocument(e.target.value)} />
+                <input
+                  value={editable ? data.sapDocument : sapDocument}
+                  maxLength={40}
+                  onChange={(e) => (editable ? change({ ...data, sapDocument: e.target.value }) : setSapDocument(e.target.value))}
+                />
               </label>
-              {canEdit && (
+              {canEdit && !editable && (
                 <button disabled={sapDocument === form.data.sapDocument} onClick={savePosting}>
                   <Save size={16} />
                   Salvar
@@ -2172,6 +2196,7 @@ function CcFormDialog({
             })
           }
           onGenerate={generate}
+          pending={canEdit && !editable && !!form && sapDocument !== form.data.sapDocument ? { label: "Salvar Doc SAP", onClick: savePosting } : null}
         />
       </DialogContent>
     </Dialog>
@@ -2343,7 +2368,7 @@ async function reviewUpload(kind: DocKind, form: AnyForm, name: string, bytes: U
   if (latest && latest.sha256 === reading.sha256) blockers.push("Este arquivo é igual à versão já guardada.");
   // Assinaturas já registradas precisam continuar no arquivo novo (senão é uma cópia mais antiga).
   const lost = form.signatures.filter(
-    (old) => old.check === "valid" && !reading.signatures.some((entry) => entry.check === "valid" && entry.slot === old.slot && entry.signer === old.signer && entry.signedAt === old.signedAt),
+    (old) => accepted(old) && !reading.signatures.some((entry) => accepted(entry) && entry.slot === old.slot && entry.signer === old.signer && entry.signedAt === old.signedAt),
   );
   for (const old of lost) blockers.push(`A assinatura de ${old.signer} (${old.slot ? slotById(old.slot).label : old.field}) não está neste arquivo: é uma cópia mais antiga. Anexe o PDF mais recente.`);
   // A página tem de ser a mesma emitida pelo portal (itens, valores, nomes) e, por cima, só campos de assinatura.
@@ -2627,6 +2652,8 @@ async function prepareImport(file: File, existing: Map<string, string>, forced?:
   } catch (e) {
     blockers.push((e as Error).message);
   }
+  // Formulário antigo: quem assinou conta como assinado, mesmo com o arquivo regravado depois.
+  if (reading && !reading.formNumber) reading = { ...reading, signatures: acceptOriginal(reading.signatures) };
   if (reading?.formNumber) blockers.push(`É um PDF emitido pelo portal (${reading.formNumber}): anexe-o dentro do próprio formulário.`);
   const repeated = reading ? existing.get(reading.sha256) : undefined;
   if (repeated) blockers.push(`Já está no portal (${repeated}).`);
@@ -2782,7 +2809,7 @@ function ImportRowView({ row, disabled, onToggle, onKind }: { row: ImportRow; di
           {signatures.map((signature, index) => (
             <i key={index} className={signature.check}>
               {signature.slot ? slotById(signature.slot).label : "fora dos quadros"}: {signature.signer || "sem nome"}
-              {signature.check === "valid" ? " ✓" : signature.check === "invalid" ? " ✗" : " ?"}
+              {accepted(signature) ? " ✓" : signature.check === "invalid" ? " ✗" : " ?"}
             </i>
           ))}
         </span>

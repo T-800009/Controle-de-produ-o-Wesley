@@ -1195,7 +1195,7 @@ function scrapServer({role='admin',forms=[],cc=[]}={}){
      const bytes=new Uint8Array(Buffer.from(body.pdf,'base64'));
      form.data={...body.data,source:body.name};form.signatures=body.signatures;form.fileVersion=1;
      form.files=[{version:1,kind:'signed',name:body.name,size:bytes.length,sha256:sha256(bytes),createdAt:now,createdBy:role,bytes}];
-     form.status=body.signatures.filter(entry=>entry.slot&&entry.check==='valid').length>=4?'signed':'signing';
+     form.status=body.signatures.filter(entry=>entry.slot&&(entry.check==='valid'||entry.check==='imported')).length>=4?'signed':'signing';
     }
     list.unshift(form);return Response.json({form:strip(form)});
    }
@@ -1209,9 +1209,9 @@ function scrapServer({role='admin',forms=[],cc=[]}={}){
     form.files.push({version,kind:body.kind,name:body.name,size:bytes.length,sha256:sha256(bytes),createdAt:now,createdBy:role,bytes});
     form.fileVersion=version;form.revision++;
     if(body.kind==='generated'){form.status='signing';form.signatures=[];}
-    else{form.signatures=body.signatures;form.status=body.signatures.filter(entry=>entry.slot&&entry.check==='valid').length>=4?'signed':'signing';form.signedAt=form.status==='signed'?now:null;}
+    else{form.signatures=body.signatures;form.status=body.signatures.filter(entry=>entry.slot&&(entry.check==='valid'||entry.check==='imported')).length>=4?'signed':'signing';form.signedAt=form.status==='signed'?now:null;}
    }
-   if(body.action==='posting'){form.data={...form.data,sapDocument:body.sapDocument??form.data.sapDocument};form.revision++;}
+   if(body.action==='posting'){const {action,id,revision,doc,...rest}=body;form.data={...form.data,...rest};form.revision++;}
    if(body.action==='sent')form.sentAt=now;
    return Response.json({form:strip(form)});
   }
@@ -1451,8 +1451,9 @@ test('IMPORTAR PDFs existentes: lê itens e assinaturas, guarda o PDF original e
   [legacyFixture('legado-scrap.pdf'),'Formulario de SCRAP A-B 22.09.2026 sem assinatura.pdf'],
   [legacyFixture('legado-cc-assinado.pdf'),'Ajuste Inventario Agosto 2026.pdf'],
   [ccFixture('gerado.pdf'),'FO.FI.C.007 do portal.pdf'],
+  [legacyFixture('legado-scrap-regravado.pdf'),'Formulario de SCRAP A-B 21.09.2026 regravado.pdf'],
  ]);
- await ui.settle(()=>document.querySelectorAll('.import-row').length===4&&!/Lendo/.test(document.querySelector('.import-dialog .scrap-check-file').textContent));
+ await ui.settle(()=>document.querySelectorAll('.import-row').length===5&&!/Lendo/.test(document.querySelector('.import-dialog .scrap-check-file').textContent));
  const row=name=>[...document.querySelectorAll('.import-row')].find(entry=>entry.textContent.includes(name));
  const signed=row('Falta assinar Rosy').textContent;
  assert.match(signed,/22\/09\/2026 · 2 item\(s\) · R\$\s3\.467,97 · 11272431-00 UNID DE CONTROLE ELETR EBS 5S/);
@@ -1464,6 +1465,12 @@ test('IMPORTAR PDFs existentes: lê itens e assinaturas, guarda o PDF original e
  assert.equal(row('Ajuste Inventario').querySelector('select').value,'cc');
  assert.match(row('do portal').textContent,/É um PDF emitido pelo portal \(CC-2026-0001\)/);
  assert.equal(row('do portal').querySelector('input[type="checkbox"]').disabled,true);
+ // Regravado depois de assinado: quem assinou conta, sem aviso.
+ const rewritten=row('regravado').textContent;
+ assert.match(rewritten,/Produção: Pessoa Producao ✓/);assert.match(rewritten,/Entra aguardando: falta Financeiro/);
+ assert.doesNotMatch(document.querySelector('.import-list').textContent,/regravado depois|não confere|alterações depois|autoassinado/);
+ await act(async()=>{row('regravado').querySelector('input[type="checkbox"]').click();});
+ await ui.settle(()=>!row('regravado').querySelector('input[type="checkbox"]').checked);
  await pressIn(ui,'.import-dialog button','Importar 3 formulário(s)');
  await ui.settle(()=>document.querySelectorAll('.import-row.done').length===3);
  const imports=server.state.posts.filter(post=>post.action==='import');
@@ -1471,7 +1478,7 @@ test('IMPORTAR PDFs existentes: lê itens e assinaturas, guarda o PDF original e
  assert.equal(imports[0].doc,'cc','Em ordem de data: agosto antes de setembro');
  const scrapImport=imports.find(post=>!post.doc);
  assert.equal(scrapImport.name,'Formulario de SCRAP A-B 22.09.2026 Falta assinar Rosy.pdf');
- assert.deepEqual(scrapImport.signatures.map(entry=>entry.slot),['production','quality','logistics']);
+ assert.deepEqual(scrapImport.signatures.map(entry=>[entry.slot,entry.check]),[['production','imported'],['quality','imported'],['logistics','imported']]);
  assert.equal(scrapImport.data.items.length,2);assert.equal(scrapImport.data.items[0].unitPrice,1233.89);assert.equal(scrapImport.data.items[1].cause,'C');
  assert.deepEqual(Buffer.from(scrapImport.pdf,'base64'),Buffer.from(legacyFixture('legado-scrap-assinado.pdf')),'PDF original, sem alteração');
  const draft=server.state.posts.find(post=>post.action==='create');
@@ -1501,6 +1508,48 @@ test('IMPORTAR PDFs existentes: lê itens e assinaturas, guarda o PDF original e
  await pressIn(ui,'.scrap-review button','Salvar esta versão');
  await ui.settle(()=>document.querySelector('.scrap-dialog .scrap-send.signed'));
  assert.equal(document.querySelectorAll('.scrap-dialog .scrap-slot.signed').length,4);
+ await closeDialog(ui);
+ ui.assertHealthy();
+});
+
+// MB51-67 · PR e PO: no rascunho e no importado vão com os dados; no emitido pelo portal, botão no rodapé.
+test('PR e PO: rascunho e importado salvam junto; emitido pelo portal salva pelo rodapé',async t=>{
+ const generated=scrapFixture('gerado.pdf');
+ const issued={id:'5d1f6a3e-0000-4000-8000-000000000009',number:'SCRAP-2026-0009',status:'signing',data:{formDate:'2026-09-24',items:[scrapItem],approvers:scrapApprovers,costCenter:'',sapDocument:'',pr:'',prDate:'',po:'',notes:''},signatures:[],fileVersion:1,
+  files:[{version:1,kind:'generated',name:'x.pdf',size:generated.length,sha256:sha256(generated),createdAt:'2026-09-24T12:00:00Z',createdBy:'admin',bytes:generated}],revision:2,createdAt:'2026-09-24T12:00:00Z',updatedAt:'2026-09-24T12:00:00Z',createdBy:'admin',signedAt:null,sentAt:null};
+ const legacy=legacyFixture('legado-scrap-assinado.pdf');
+ const imported={...issued,id:'5d1f6a3e-0000-4000-8000-000000000008',number:'SCRAP-2026-0008',data:{...issued.data,source:'antigo.pdf'},signatures:[{field:'Signature3',slot:'production',signer:'Pessoa Producao',signedAt:'2026-09-22T12:00:00.000Z',check:'imported',coversWholeFile:false,detail:''}],
+  files:[{version:1,kind:'signed',name:'antigo.pdf',size:legacy.length,sha256:sha256(legacy),createdAt:'2026-09-24T12:00:00Z',createdBy:'admin',bytes:legacy}]};
+ const server=scrapServer({forms:[issued,imported]});
+ const ui=await mount(t,{url:'https://portal.test/?modulo=baixas',respond:server.respond});
+ await ui.settle(()=>ui.container.querySelectorAll('.scrap-row').length===2);
+ const posting=label=>[...document.querySelectorAll('.scrap-dialog [aria-label="Reposição e baixa no SAP"] label')].find(entry=>entry.textContent.trim().startsWith(label)).querySelector('input');
+ // Novo (rascunho): PR e PO vão com o rascunho.
+ await ui.click('.scrap-forms button','Novo Scrap Form');
+ await ui.settle(()=>document.querySelector('.scrap-dialog [aria-label="Reposição e baixa no SAP"]'));
+ await typeInto(posting('PR'),'6000014878');await typeInto(posting('PO'),'9900029259');
+ await pressIn(ui,'.scrap-dialog .scrap-footer button','Salvar rascunho');
+ await ui.settle(()=>server.state.posts.some(post=>post.action==='create'));
+ const created=server.state.posts.find(post=>post.action==='create');
+ assert.equal(created.data.pr,'6000014878');assert.equal(created.data.po,'9900029259');
+ await closeDialog(ui);
+ // Importado: PR habilita "Salvar dados".
+ await act(async()=>{[...ui.container.querySelectorAll('.scrap-row')].find(entry=>/SCRAP-2026-0008/.test(entry.textContent)).dispatchEvent(new window.MouseEvent('click',{bubbles:true,button:0}));});
+ await ui.settle(()=>document.querySelector('.scrap-dialog .scrap-slots'));
+ await typeInto(posting('PR'),'6000099999');
+ await pressIn(ui,'.scrap-dialog .scrap-footer button','Salvar dados');
+ await ui.settle(()=>server.state.posts.some(post=>post.action==='update'&&post.id===imported.id));
+ assert.equal(server.state.posts.find(post=>post.action==='update'&&post.id===imported.id).data.pr,'6000099999');
+ await closeDialog(ui);
+ // Emitido pelo portal: o botão aparece no rodapé quando muda.
+ await act(async()=>{[...ui.container.querySelectorAll('.scrap-row')].find(entry=>/SCRAP-2026-0009/.test(entry.textContent)).dispatchEvent(new window.MouseEvent('click',{bubbles:true,button:0}));});
+ await ui.settle(()=>document.querySelector('.scrap-dialog .scrap-slots'));
+ assert.equal([...document.querySelectorAll('.scrap-dialog .scrap-footer button')].some(button=>/Salvar PR e PO/.test(button.textContent)),false);
+ await typeInto(posting('PO'),'9900011111');
+ await pressIn(ui,'.scrap-dialog .scrap-footer button','Salvar PR e PO');
+ await ui.settle(()=>server.state.posts.some(post=>post.action==='posting'));
+ assert.equal(server.state.posts.find(post=>post.action==='posting').po,'9900011111');
+ await ui.settle(()=>/PR, PO e baixa no SAP salvos/.test(document.querySelector('.scrap-message')?.textContent||''));
  await closeDialog(ui);
  ui.assertHealthy();
 });

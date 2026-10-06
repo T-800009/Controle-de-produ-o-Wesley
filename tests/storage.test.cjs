@@ -378,6 +378,7 @@ console.log('Observações Ana: compartilhamento, isolamento OP/material, perfil
   assert.equal(imported.status,'signing','Falta o Financeiro (item classe B)');
   assert.equal(imported.data.source,'Formulario de SCRAP A-B 22.09.2026 falta Rosy.pdf','Origem é o nome do PDF, não o que veio nos dados');
   assert.equal(imported.files.length,1);assert.equal(imported.files[0].kind,'signed');assert.equal(imported.fileVersion,1);
+  assert.deepEqual(imported.signatures.map(entry=>entry.check),['imported','imported','imported'],'Quem assinou o PDF antigo conta, sem conferir se foi regravado');
   assert.deepEqual(Buffer.from(await (await call(`/api/scrap-forms?file=${imported.id}&version=1`,{headers:viewerHeaders},viewerEnv)).arrayBuffer()),legacy);
   const again=await importOne({});
   assert.equal(again.status,409);assert.match((await again.json()).error,new RegExp(`já está no portal \\(${imported.number}\\)`),'O mesmo PDF não entra duas vezes');
@@ -388,9 +389,11 @@ console.log('Observações Ana: compartilhamento, isolamento OP/material, perfil
   assert.equal(imported.status,'signed','Classe C: o Financeiro deixa de ser exigido');assert.ok(imported.signedAt);assert.equal(imported.signatures.length,3);
   imported=(await (await scrap({action:'update',id:imported.id,revision:imported.revision,data:legacyData})).json()).form;
   assert.equal(imported.status,'signing');assert.equal(imported.signedAt,null);
+  // Assinatura "importada" que não veio na importação é recusada.
+  assert.equal((await scrap({action:'upload',id:imported.id,revision:imported.revision,kind:'signed',name:'x.pdf',pdf:b64(fs.readFileSync(path.join(root,'tests/fixtures/legado/legado-scrap-completo.pdf'))),signatures:[...imported.signatures,{...sig('finance','Assinatura_Financeiro','Pessoa Financeiro'),check:'imported'}]})).status,400);
   // O PDF devolvido com a assinatura do Financeiro entra como nova versão.
   const complete=fs.readFileSync(path.join(root,'tests/fixtures/legado/legado-scrap-completo.pdf'));
-  imported=(await (await scrap({action:'upload',id:imported.id,revision:imported.revision,kind:'signed',name:'completo.pdf',pdf:b64(complete),signatures:[...three.map(entry=>({...entry,coversWholeFile:false})),{...sig('finance','Assinatura_Financeiro','Pessoa Financeiro'),coversWholeFile:true}]})).json()).form;
+  imported=(await (await scrap({action:'upload',id:imported.id,revision:imported.revision,kind:'signed',name:'completo.pdf',pdf:b64(complete),signatures:[...imported.signatures.map(entry=>({...entry,coversWholeFile:false})),{...sig('finance','Assinatura_Financeiro','Pessoa Financeiro'),coversWholeFile:true}]})).json()).form;
   assert.equal(imported.status,'signed');assert.equal(imported.files.length,2);
   // Criar à mão não aceita "source".
   const manual=(await (await scrap({action:'create',data:{...data,source:'falso.pdf'}})).json()).form;
