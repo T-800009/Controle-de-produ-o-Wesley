@@ -1,3 +1,15 @@
+# Robô SAP (pasta robo-sap)
+
+O robô roda no Windows, com o SAP aberto e logado. Ele roda a MB51 (BR02, movimentos 261/262, do dia 1 do mês anterior até hoje), exporta a lista e grava na aba MB51 da planilha por um App da Web do Apps Script. O portal não muda: depois é só clicar em **Atualizar dados**.
+
+- `robo-sap.js` é o robô, em JScript do Windows Script Host; não precisa instalar nada.
+- `Robo SAP.cmd` abre o robô; `config.txt` guarda URL, chave, centro, meses e layout.
+- `apps-script.gs` é colado em Extensões → Apps Script da planilha. Ele só grava com a chave, só nas abas permitidas, e guarda a aba anterior em "<aba> (anterior)".
+- A chave fica só nos arquivos entregues ao usuário. Aqui no repositório ela é `TROQUE-ESTA-CHAVE`.
+- Testes: `tests/robo-sap.test.cjs` cobre a leitura da lista do SAP, os números e o Apps Script.
+
+---
+
 # MB51-67 — Importação sem aviso de "regravado" e PR/PO em qualquer formulário
 
 - **Importar PDFs existentes:** quem assinou o PDF antigo conta como assinado, mesmo que o arquivo tenha sido regravado depois. Saíram da importação os avisos de "não confere", "alterações depois da última assinatura" e "ID autoassinado". Quando alguém assina de novo um formulário importado, só essa assinatura nova é conferida.

@@ -1,0 +1,19 @@
+# Robo SAP - configuracoes (pode editar no Bloco de Notas)
+
+# URL do App da Web da planilha. O robo pergunta na primeira vez que rodar.
+URL_PLANILHA=
+
+# Chave do robo. Tem que ser a mesma do Apps Script da planilha.
+CHAVE=TROQUE-ESTA-CHAVE
+
+# Centro da MB51
+CENTRO=BR02
+
+# A MB51 vai do dia 1 de quantos meses atras ate hoje (1 = desde o comeco do mes anterior)
+MESES_ATRAS=1
+
+# Layout da MB51 com Ordem, Material, Quantidade e Tipo de movimento (vazio = o seu layout padrao)
+LAYOUT_MB51=
+
+# Aba da planilha que recebe a MB51
+ABA_MB51=MB51
