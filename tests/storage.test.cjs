@@ -326,7 +326,7 @@ console.log('Observações Ana: compartilhamento, isolamento OP/material, perfil
  const ccData={period:'2026-09',items:[ccItem],mainReason:'Scrapped materials approved in Scrap Form '+third.number+'.',reason:'Scrap',action:'Write off the scrapped quantities.',approvers:{requester:'Pessoa Solicitante',manager:'Pessoa Gestor',scm:'Pessoa SCM',finance:'Pessoa Financeiro',production:'intruso'},scrapForms:[third.number,'lixo',third.number],sapDocument:'',notes:''};
  assert.equal((await cc({action:'create',data:ccData},viewerHeaders,viewerEnv)).status,403,'Consulta só lê');
  assert.equal((await cc({action:'create',data:{...ccData,items:[{...ccItem,unitCost:-5}]}})).status,400,'Custo negativo é recusado');
- assert.equal((await cc({action:'create',data:{...ccData,items:Array(21).fill(ccItem)}})).status,400,'No máximo 20 itens');
+ assert.equal((await cc({action:'create',data:{...ccData,items:Array(301).fill(ccItem)}})).status,400,'No máximo 300 itens');
  let ccForm=(await (await cc({action:'create',data:ccData})).json()).form;
  assert.equal(ccForm.number,`CC-${year}-0001`,'Numeração própria, independente do Scrap Form');
  assert.deepEqual(ccForm.data.scrapForms,[third.number],'Só números SCRAP-… válidos, sem repetir');
@@ -361,6 +361,20 @@ console.log('Observações Ana: compartilhamento, isolamento OP/material, perfil
  assert.equal((await (await cc({action:'create',data:ccData})).json()).form.number,`CC-${year}-0002`,'Número apagado não volta a ser usado');
  assert.equal((await (await scrap({action:'create',data})).json()).form.number,`SCRAP-${year}-0004`,'A baixa não consome número de Scrap Form');
  console.log('FO.FI.C.007: numeração CC-…, listas separadas, quatro assinaturas obrigatórias, Doc SAP, reabertura e exclusão passaram.');
+ // MB51-68 · Baixa vinda de planilha: 300 itens, PDF de 8 páginas guardado em partes e lido de volta igual.
+ {
+  const big=Array.from({length:300},(_,index)=>({...ccItem,material:`2000${String(index+1).padStart(4,'0')}-00`,description:'PECA PERDIDA NO INVENTARIO '+(index+1),quantity:-(index+1),unitCost:12.3456}));
+  let bigForm=(await (await cc({action:'create',data:{...ccData,scrapForms:[],items:big,reason:'LOSS'}})).json()).form;
+  assert.equal(bigForm.data.items.length,300);assert.equal(bigForm.data.items[299].unitCost,12.3456);
+  const bigPdf=await buildCcPdf({number:bigForm.number,data:bigForm.data});
+  bigForm=(await (await cc({action:'upload',id:bigForm.id,revision:bigForm.revision,name:'FO.FI.C.007 grande.pdf',kind:'generated',pdf:b64(bigPdf)})).json()).form;
+  assert.equal(bigForm.status,'signing');assert.equal(bigForm.files[0].size,bigPdf.length);
+  assert.ok((await db.prepare('SELECT COUNT(*) AS n FROM scrap_files WHERE form_id=?').bind(bigForm.id).first()).n>1,'PDF grande em mais de uma parte');
+  assert.deepEqual(new Uint8Array(await (await call(`/api/scrap-forms?file=${bigForm.id}&version=1`,{headers:viewerHeaders},viewerEnv)).arrayBuffer()),bigPdf);
+  const bigReopened=(await (await cc({action:'reopen',id:bigForm.id,revision:bigForm.revision},adminJson,environment)).json()).form;
+  assert.equal((await cc({action:'delete',id:bigReopened.id,revision:bigReopened.revision},adminJson,environment)).status,200);
+  console.log(`FO.FI.C.007 com 300 itens: PDF de ${Math.round(bigPdf.length/1024)} KB guardado e lido de volta.`);
+ }
  // MB51-65 · Formulários que já existiam (Excel → PDF assinado): número do portal, PDF original guardado, transcrição corrigível.
  {
   const legacy=fs.readFileSync(path.join(root,'tests/fixtures/legado/legado-scrap-assinado.pdf'));

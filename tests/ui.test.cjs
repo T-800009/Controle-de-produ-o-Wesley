@@ -1433,6 +1433,78 @@ test('BAIXA EM CC: o PDF devolvido só fica assinado com Solicitante, Gestor, SC
  ui.assertHealthy();
 });
 
+// MB51-68 · Baixa em CC a partir de uma planilha (ex.: LOSS 7000.xlsx): todos os itens de uma vez, PDF com páginas de continuação.
+function lossWorkbook(count){
+ const x=require('xlsx');const book=x.utils.book_new();
+ const rows=[['Material','Texto breve material','Centro','Depósito','UM básica','Utilização livre','Val.utiliz.livre','Comentários']];
+ for(let i=1;i<=count;i++)rows.push([`2000${String(i).padStart(4,'0')}-00`,`PECA PERDIDA ${i}`,'BR02','7000','PC',i,i*10.5,'LOSS']);
+ rows.push([null,null,null,null,null,count*(count+1)/2,null,null]);
+ x.utils.book_append_sheet(book,x.utils.aoa_to_sheet(rows),'Sheet1');
+ return x.write(book,{type:'buffer',bookType:'xlsx'});
+}
+async function attachSheet(input,bytes,name){
+ const {File}=require('node:buffer');
+ Object.defineProperty(input,'files',{configurable:true,value:[new File([bytes],name,{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'})]});
+ await act(async()=>{input.dispatchEvent(new window.Event('change',{bubbles:true}));});
+}
+test('BAIXA EM CC: Importar Excel preenche todos os itens, aplica o centro de custo e gera o PDF com páginas de continuação',async t=>{
+ const server=scrapServer();
+ const ui=await mount(t,{url:'https://portal.test/?modulo=baixas&doc=cc',respond:server.respond});
+ await ui.settle(()=>[...ui.container.querySelectorAll('.scrap-forms button')].some(button=>button.textContent.trim()==='Nova baixa em CC'));
+ await ui.click('.scrap-forms button','Nova baixa em CC');
+ await ui.settle(()=>document.querySelector('.cc-dialog input[aria-label="Planilha de itens da baixa"]'));
+ assert.ok([...document.querySelectorAll('.cc-dialog button')].some(button=>button.textContent.trim()==='Importar Excel'));
+ const input=document.querySelector('.cc-dialog input[aria-label="Planilha de itens da baixa"]');
+ // Planilha sem a coluna Material: erro claro, nada muda.
+ const x=require('xlsx');const wrong=x.utils.book_new();x.utils.book_append_sheet(wrong,x.utils.aoa_to_sheet([['Peça','Qtd'],['1',2]]),'A');
+ await attachSheet(input,x.write(wrong,{type:'buffer',bookType:'xlsx'}),'errada.xlsx');
+ await ui.settle(()=>/coluna Material/.test(document.querySelector('.cc-dialog .scrap-message.error')?.textContent||''));
+ assert.equal(document.querySelectorAll('.cc-dialog .scrap-item').length,1);
+ await attachSheet(input,lossWorkbook(25),'LOSS 7000.xlsx');
+ await ui.settle(()=>/25 itens importados de "LOSS 7000\.xlsx"/.test(document.querySelector('.cc-dialog .scrap-message.ok')?.textContent||''));
+ const message=document.querySelector('.cc-dialog .scrap-message.ok').textContent;
+ assert.match(message,/1 linha\(s\) sem material ou quantidade ficaram de fora/,'Linha de total da planilha');
+ assert.match(message,/O PDF vai ter 2 páginas/);
+ assert.equal(document.querySelector('.cc-dialog .scrap-item'),null,'Lista longa vira tabela compacta (o item vazio sai)');
+ const rows=()=>[...document.querySelectorAll('.cc-dialog .cc-edit-table tbody tr')];
+ assert.equal(rows().length,25);
+ const cell=(row,label)=>rows()[row].querySelector(`input[aria-label="${label} do item ${row+1}"]`).value;
+ assert.equal(cell(0,'Material'),'20000001-00');
+ assert.equal(cell(0,'Quantidade'),'-1','Estoque livre vira saída');
+ assert.equal(cell(0,'Custo unitário'),'10,50');
+ assert.equal(cell(24,'Quantidade'),'-25');
+ assert.equal(cell(24,'Centro de custo'),'BR000411');
+ assert.match(document.querySelector('.cc-dialog [aria-label="Itens da baixa"] .scrap-section-head').textContent,/Itens \(25\).*-R\$\s3\.412,50/);
+ assert.equal(document.querySelector('.cc-remarks input').value,'LOSS');
+ assert.equal(document.querySelector('.cc-remarks .cc-main textarea').value,'Materials listed as LOSS in warehouse 7000.');
+ // Centro de custo de todos de uma vez (a Action acompanha).
+ const bulk=[...document.querySelectorAll('.cc-dialog .cc-bulk input')];
+ await typeInto(bulk[0],'BR000999');await typeInto(bulk[1],'Perdas de inventario');
+ await pressIn(ui,'.cc-dialog .cc-bulk button','Aplicar aos 25 itens');
+ assert.equal(cell(13,'Centro de custo'),'BR000999');
+ assert.equal(cell(13,'Descrição do centro de custo'),'Perdas de inventario');
+ assert.match(document.querySelector('.cc-remarks .cc-action textarea').value,/through cost center BR000999 - Perdas de inventario\./);
+ // Tirar uma linha e editar outra direto na tabela.
+ await pressIn(ui,'.cc-dialog .cc-edit-table button[aria-label="Remover item 25"]');
+ assert.equal(rows().length,24);
+ await typeInto(rows()[0].querySelector('input[aria-label="Quantidade do item 1"]'),'-2');
+ await pressIn(ui,'.cc-dialog button','Gerar PDF para assinatura');
+ await ui.settle(()=>/CC-2026-0001 · Aguardando assinatura/.test(document.querySelector('.cc-dialog h2')?.textContent||''));
+ const create=server.state.posts.find(post=>post.action==='create');
+ assert.equal(create.data.items.length,24);
+ assert.equal(create.data.items[0].quantity,-2);
+ assert.ok(create.data.items.every(item=>item.costCenter==='BR000999'&&item.quantity<0));
+ const upload=server.state.posts.find(post=>post.action==='upload');
+ const {PDFDocument}=require('pdf-lib');
+ const doc=await PDFDocument.load(Buffer.from(upload.pdf,'base64'));
+ assert.equal(doc.getPageCount(),2,'20 itens na 1ª página, 4 na continuação');
+ assert.equal(doc.getPage(1).node.Annots()?.size()??0,0,'Assinaturas só na 1ª página');
+ assert.ok(document.querySelector('.cc-dialog .cc-items-table'),'Emitido: tabela só para leitura');
+ assert.equal(document.querySelectorAll('.cc-dialog .cc-items-table tbody tr').length,24);
+ await closeDialog(ui);
+ ui.assertHealthy();
+});
+
 // MB51-65 · Importar os formulários que já existiam (Excel → PDF assinado no Adobe).
 const legacyFixture=name=>new Uint8Array(fs.readFileSync(path.join(__dirname,'fixtures','legado',name)));
 async function attachMany(input,files){

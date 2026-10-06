@@ -303,7 +303,7 @@ test("campo desenhado fora dos quadros não vale; nome vem do certificado; RSA-P
 test("o PDF devolvido precisa mostrar a mesma página emitida pelo portal", async () => {
   const generated = fixture("gerado.pdf");
   const same = await compareWithGenerated(generated, fixture("assinado-completo.pdf"));
-  assert.deepEqual(same, { sameContent: true, pages: 1, extraAnnotations: [], notes: [] });
+  assert.deepEqual(same, { sameContent: true, pages: 1, originalPages: 1, extraAnnotations: [], notes: [] });
   // Valor alterado entre as assinaturas: cada assinatura confere, mas a página não é a emitida.
   const between = await compareWithGenerated(generated, attack("isa-between.pdf"));
   assert.equal(between.sameContent, false);

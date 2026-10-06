@@ -243,7 +243,7 @@ export async function uploadScrapPdf(db:PortalDatabase,payload:{id?:unknown;revi
  let status:ScrapStatus,signatures:ScrapSignature[]=[];
  if(kind==='generated'){
   if(form.status!=='draft')throw new ScrapError('Este formulário já foi emitido. Use Reabrir para gerar outro PDF.',409);
-  if(bytes.length>300_000)throw new ScrapError('O PDF emitido pelo portal tem poucos KB: este arquivo não é o gerado aqui.');
+  if(bytes.length>600_000)throw new ScrapError('O PDF emitido pelo portal tem poucos KB: este arquivo não é o gerado aqui.');
   // O PDF emitido pelo portal grava o número do formulário em texto simples.
   if(!countBytes(bytes,`(${form.number})`))throw new ScrapError('Este PDF não é do formulário '+form.number+'.');
   status='signing';

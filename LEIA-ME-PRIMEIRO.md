@@ -10,6 +10,21 @@ O robô roda no Windows, com o SAP aberto e logado. Ele roda a MB51 (BR02, movim
 
 ---
 
+# MB51-68 — Baixa em CC direto de uma planilha Excel
+
+Na **Baixa em CC (FO.FI.C.007)**, o botão **Importar Excel** preenche todos os itens de uma vez a partir de uma planilha como a `LOSS 7000.xlsx` (exportada da MB52).
+
+- **Colunas lidas:** Material, Texto breve material, Centro, Depósito, Utilização livre e Val.utiliz.livre. Comentários é opcional.
+- **Nomes alternativos:** Código, Descrição, Qtd/Quantidade, Custo unitário e Centro de custo também servem. O cabeçalho pode estar abaixo de linhas de título.
+- **Quantidade:** "Utilização livre" (estoque) vira saída do estoque, com quantidade negativa. Uma coluna "Quantidade" entra com o sinal que tiver.
+- **Custo unitário:** é o valor da linha dividido pela quantidade, com as casas necessárias para o total bater com a planilha.
+- **Linhas ignoradas:** linhas sem material ou com quantidade zero (por exemplo, a linha de total) ficam de fora, e a mensagem informa quantas.
+- **Remarks:** com um único comentário (por exemplo, LOSS), o portal preenche Reason, Main reason e Action. Texto que você já digitou não é trocado.
+- **Lista longa:** a partir de 13 itens, os itens aparecem numa tabela compacta e editável. Nela, **Centro de custo de todos os itens → Aplicar** troca o CC de uma vez, e a Action acompanha. **Limpar itens** esvazia a lista.
+- **Até 300 itens por formulário.** O PDF traz 20 itens e os quatro quadros de assinatura na 1ª página. Os demais itens vão em páginas de continuação (40 por página), com "Página x/y" e o TOTAL geral. A conferência do PDF assinado compara todas as páginas.
+
+---
+
 # MB51-67 — Importação sem aviso de "regravado" e PR/PO em qualquer formulário
 
 - **Importar PDFs existentes:** quem assinou o PDF antigo conta como assinado, mesmo que o arquivo tenha sido regravado depois. Saíram da importação os avisos de "não confere", "alterações depois da última assinatura" e "ID autoassinado". Quando alguém assina de novo um formulário importado, só essa assinatura nova é conferida.

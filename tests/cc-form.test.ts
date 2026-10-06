@@ -7,6 +7,7 @@ import {
   MAX_CC_ITEMS,
   ccFileName,
   ccFromScrapForms,
+  ccFromSpreadsheet,
   ccItemTotal,
   ccProblems,
   ccShareMessage,
@@ -15,11 +16,14 @@ import {
   emptyCcItem,
   periodLabel,
   sanitizeCcData,
+  sheetNumber,
   summarizeCcForms,
   type CcForm,
   type CcFormData,
 } from "../lib/cc-form.ts";
 import { CC_PAGE, buildCcPdf, compareWithGenerated, readScrapPdf } from "../lib/scrap-pdf.ts";
+import { pageText } from "../lib/pdf-text.ts";
+import * as XLSX from "xlsx";
 
 const fixture = (name: string) => new Uint8Array(readFileSync(new URL("./fixtures/cc/" + name, import.meta.url)));
 const approvers = { requester: "Pessoa Solicitante", manager: "Pessoa Gestor", scm: "Pessoa SCM", finance: "Pessoa Financeiro" };
@@ -115,7 +119,7 @@ test("a API limpa a baixa: quantidade negativa = saída, custo nunca negativo, l
   assert.deepEqual(clean.scrapForms, ["SCRAP-2026-0001"]);
   assert.throws(() => sanitizeCcData({ ...data, items: [{ ...item, unitCost: -1 }] }), /inválido/);
   assert.throws(() => sanitizeCcData({ ...data, items: [{ ...item, quantity: 1e9 }] }), /inválido/);
-  assert.throws(() => sanitizeCcData({ ...data, items: Array(MAX_CC_ITEMS + 1).fill(item) }), /no máximo 20/);
+  assert.throws(() => sanitizeCcData({ ...data, items: Array(MAX_CC_ITEMS + 1).fill(item) }), /no máximo 300/);
   assert.throws(() => sanitizeCcData({ items: "x" }), /inválido/);
   assert.equal(parseBrNumber("-1.000"), -1000);
   assert.equal(parseBrNumber("-2,5"), -2.5);
@@ -205,7 +209,7 @@ test("PDF do FO.FI.C.007: A3 paisagem, uma página, número e quatro campos de a
     ],
   );
   assert.deepEqual(reading.signatures, []);
-  await assert.rejects(buildCcPdf({ number: "CC-2026-0002", data: { ...data, items: Array(MAX_CC_ITEMS + 1).fill(item) } }), /no máximo 20/);
+  await assert.rejects(buildCcPdf({ number: "CC-2026-0002", data: { ...data, items: Array(MAX_CC_ITEMS + 1).fill(item) } }), /no máximo 300/);
 });
 
 test("PDF devolvido com as quatro assinaturas (pyHanko): confere e mostra a mesma página emitida", async () => {
@@ -232,4 +236,123 @@ test("PDF devolvido com as quatro assinaturas (pyHanko): confere e mostra a mesm
   // Outro conteúdo (quantidade diferente) não passa como o mesmo formulário.
   const other = await buildCcPdf({ number: "CC-2026-0001", data: { ...data, items: [{ ...item, quantity: -2 }] }, generatedAt: new Date("2026-09-24T12:00:00-03:00") });
   assert.equal((await compareWithGenerated(generated, other)).sameContent, false);
+});
+
+// Mesmo formato da "LOSS 7000.xlsx" (exportada da MB52): estoque livre e valor total.
+const LOSS_HEADER = ["Material", "Texto breve material", "Centro", "Depósito", "UM básica", "Utilização livre", "Val.utiliz.livre", "Comentários"];
+const lossRows = (): unknown[][] => [
+  LOSS_HEADER,
+  ["10000001-00", "PARAFUSO SEXTAVADO M8", "BR02", "7000", "PC", 12, 30.36, "LOSS"],
+  ["10000002-00", "ARRUELA LISA 8MM", "BR02", "7000", "PC", 3, 1, "LOSS"],
+  [null, null, null, null, null, null, null, null],
+  ["10000003-00", "CHICOTE TRASEIRO", "BR02", "7000", "PC", 0, 0, "LOSS"],
+  ["10000004-00", "SUPORTE DO PARACHOQUE", "BR02", "7000", "KG", "1.234,5", "R$ 2.469,00", "LOSS"],
+  [null, null, null, null, null, 1249.5, 2500.36, null],
+];
+
+test("planilha: números do Excel em texto ou número", () => {
+  assert.equal(sheetNumber(12), 12);
+  assert.equal(sheetNumber("R$ 1.471,23"), 1471.23);
+  assert.equal(sheetNumber("1,471.23"), 1471.23);
+  assert.equal(sheetNumber("10-"), -10, "Sinal no fim, como o SAP exporta");
+  assert.equal(sheetNumber("(5,5)"), -5.5);
+  assert.equal(sheetNumber("1.234.567"), 1234567);
+  assert.equal(sheetNumber("2,5"), 2.5);
+  assert.equal(sheetNumber(""), null);
+  assert.equal(sheetNumber("PC"), null);
+  assert.equal(sheetNumber(Number.NaN), null);
+});
+
+test("planilha LOSS 7000 → itens da baixa: estoque vira saída, custo = valor ÷ quantidade", () => {
+  const result = ccFromSpreadsheet(lossRows(), { costCenter: "BR000411", costCenterDescription: "Operational - Chassis" });
+  assert.equal(result.items.length, 3, "Linha vazia, estoque zero e linha de total ficam de fora");
+  assert.equal(result.skipped, 2, "Estoque zero e total contam como ignoradas; a linha vazia não");
+  assert.deepEqual(result.items[0], {
+    company: "BR00",
+    plant: "BR02",
+    wh: "7000",
+    material: "10000001-00",
+    description: "PARAFUSO SEXTAVADO M8",
+    quantity: -12,
+    unitCost: 2.53,
+    costCenter: "BR000411",
+    costCenterDescription: "Operational - Chassis",
+  });
+  // 1 ÷ 3 não fecha com 2 casas: o custo unitário leva as casas necessárias para o total bater.
+  assert.equal(ccItemTotal(result.items[1]), -1);
+  assert.equal(result.items[2].quantity, -1234.5);
+  assert.equal(result.items[2].unitCost, 2);
+  assert.equal(ccTotals(result).cost, -2500.36, "Total igual ao da planilha");
+  assert.equal(result.reason, "LOSS");
+  assert.equal(result.mainReason, "Materials listed as LOSS in warehouse 7000.");
+  assert.equal(result.action, "Write off the quantities from warehouse 7000 through cost center BR000411 - Operational - Chassis.");
+  // Passa pela limpeza da API como qualquer baixa.
+  assert.equal(sanitizeCcData({ ...data, items: result.items }).items.length, 3);
+});
+
+test("planilha: cabeçalho fora da 1ª linha, coluna Quantidade com sinal e erros claros", () => {
+  const rows = [["Relatório de perdas"], [], ["Código", "Descrição", "Qtd", "Custo unitário", "Centro de custo", "Motivo"], ["10000009-00", "TAMPA", -2, "10,50", "BR000999", "Avaria"], ["10000010-00", "BUCHA", 1, 4, "", "Sobra"]];
+  const result = ccFromSpreadsheet(rows);
+  assert.deepEqual(
+    result.items.map((entry) => [entry.material, entry.quantity, entry.unitCost, entry.costCenter, entry.wh]),
+    [
+      ["10000009-00", -2, 10.5, "BR000999", "7000"],
+      ["10000010-00", 1, 4, "BR000411", "7000"],
+    ],
+  );
+  assert.equal(result.reason, "", "Motivos diferentes: o texto fica para preencher");
+  assert.throws(() => ccFromSpreadsheet([["A", "B"], [1, 2]]), /coluna Material/);
+  assert.throws(() => ccFromSpreadsheet([["Material", "Descrição"], ["1", "x"]]), /coluna de quantidade/);
+  assert.throws(() => ccFromSpreadsheet([["Material", "Utilização livre"], ["1", 2]]), /custo/);
+});
+
+test("planilha de verdade (.xlsx feito pelo SheetJS) lida como no portal", () => {
+  const book = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(book, XLSX.utils.aoa_to_sheet(lossRows()), "Sheet1");
+  const bytes = XLSX.write(book, { type: "array", bookType: "xlsx" }) as ArrayBuffer;
+  const read = XLSX.read(bytes, { type: "array", dense: true });
+  const rows = XLSX.utils.sheet_to_json(read.Sheets[read.SheetNames[0]], { header: 1, raw: true, defval: null }) as unknown[][];
+  const result = ccFromSpreadsheet(rows);
+  assert.equal(result.items.length, 3);
+  assert.equal(ccTotals(result).cost, -2500.36);
+});
+
+test("PDF com muitos itens: 20 na 1ª página com as assinaturas, o resto em páginas de continuação", async () => {
+  const items = Array.from({ length: 75 }, (_, index) => ({ ...item, material: `1000${String(index + 1).padStart(4, "0")}-00`, quantity: -(index + 1), unitCost: 1.2345 }));
+  const many = { ...data, items };
+  const generatedAt = new Date("2026-09-24T12:00:00-03:00");
+  const bytes = await buildCcPdf({ number: "CC-2026-0003", data: many, generatedAt });
+  const { PDFDocument } = await import("pdf-lib");
+  const doc = await PDFDocument.load(bytes);
+  assert.equal(doc.getPageCount(), 3, "20 + 40 + 15");
+  const texts = [0, 1, 2].map((index) => pageText(doc, index).runs.map((run) => run.text).join(" | "));
+  assert.match(texts[0], /TOTAL \(75 itens · continua na página 2\)/);
+  assert.match(texts[0], /Página 1\/3/);
+  assert.match(texts[0], /10000020-00/);
+  assert.doesNotMatch(texts[0], /10000021-00/);
+  assert.match(texts[1], /Continuação · itens 21 a 60 de 75/);
+  assert.match(texts[1], /10000060-00/);
+  assert.match(texts[2], /Continuação · itens 61 a 75 de 75/);
+  assert.match(texts[2], /TOTAL \(75 itens\)/);
+  assert.match(texts[2], /Página 3\/3/);
+  assert.match(texts[0], /R\$ 1,2345/, "Custo unitário com 4 casas");
+  const reading = await readScrapPdf(bytes);
+  assert.equal(reading.pages, 3);
+  assert.deepEqual(
+    reading.fields.map((field) => field.slot),
+    ["requester", "manager", "scm", "finance"],
+    "Só os quatro quadros, na 1ª página",
+  );
+  assert.equal(doc.getPage(1).node.Annots()?.size() ?? 0, 0);
+  // Item trocado só na última página: não é o mesmo formulário.
+  const same = await buildCcPdf({ number: "CC-2026-0003", data: many, generatedAt });
+  assert.equal((await compareWithGenerated(bytes, same)).sameContent, true);
+  const changed = await buildCcPdf({ number: "CC-2026-0003", data: { ...many, items: items.map((entry, index) => (index === 74 ? { ...entry, quantity: -1 } : entry)) }, generatedAt });
+  const comparison = await compareWithGenerated(bytes, changed);
+  assert.equal(comparison.sameContent, false);
+  assert.equal(comparison.originalPages, 3);
+  // Limite máximo cabe no que o servidor guarda.
+  const full = await buildCcPdf({ number: "CC-2026-0004", data: { ...data, items: Array.from({ length: MAX_CC_ITEMS }, (_, index) => ({ ...items[index % items.length] })) }, generatedAt });
+  assert.equal((await PDFDocument.load(full)).getPageCount(), 8, "20 + 7 × 40");
+  assert.ok(full.length < 400_000, `PDF de ${MAX_CC_ITEMS} itens com ${full.length} bytes`);
 });

@@ -1,4 +1,4 @@
-import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import {
   CheckCircle2,
   Clock3,
@@ -7,6 +7,7 @@ import {
   Eye,
   FilePlus2,
   FileSearch,
+  FileSpreadsheet,
   FileText,
   Link2,
   ListPlus,
@@ -67,6 +68,7 @@ import {
   MAX_CC_ITEMS,
   ccFileName,
   ccFromScrapForms,
+  ccFromSpreadsheet,
   ccItemTotal,
   ccProblems,
   ccShareMessage,
@@ -136,6 +138,11 @@ const fmt = (value: number) => value.toLocaleString("pt-BR");
 const moneyInput = (value: number | null) =>
   value === null ? "" : value.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const qtyInput = (value: number | null) => (value === null ? "" : value.toLocaleString("pt-BR", { maximumFractionDigits: 3 }));
+/** Custo unitário da baixa: pode vir da planilha com mais de 2 casas (média do SAP). */
+const costInput = (value: number | null) =>
+  value === null ? "" : value.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 6 });
+const unitCostText = (value: number | null) =>
+  value === null ? "" : value.toLocaleString("pt-BR", { style: "currency", currency: "BRL", minimumFractionDigits: 2, maximumFractionDigits: 4 });
 
 function toBase64(bytes: Uint8Array) {
   let binary = "";
@@ -1755,6 +1762,31 @@ function ItemsTable({ items }: { items: ScrapItem[] }) {
 const ccDefaultsOf = (item?: Partial<CcItem> | null): Partial<CcDefaults> =>
   item ? { company: item.company, plant: item.plant, wh: item.wh, costCenter: item.costCenter, costCenterDescription: item.costCenterDescription } : {};
 const blankCcItem = (item: CcItem) => !item.material && !item.description && item.quantity === null && item.unitCost === null;
+/** A partir daqui os itens viram uma tabela compacta (lista vinda de planilha). */
+const CC_COMPACT_FROM = 13;
+const ccPages = (items: number) => 1 + Math.max(0, Math.ceil((items - 20) / 40));
+/** Primeira aba da planilha que tenha Material e quantidade → itens do FO.FI.C.007. */
+async function readCcSheet(file: File, defaults: Partial<CcDefaults>) {
+  const x = await import("xlsx");
+  let book: ReturnType<typeof x.read>;
+  try {
+    book = x.read(await file.arrayBuffer(), { type: "array", dense: true });
+  } catch {
+    throw Error(`Não consegui abrir "${file.name}". Salve como .xlsx no Excel e tente de novo.`);
+  }
+  let error = "";
+  for (const name of book.SheetNames) {
+    try {
+      const rows = x.utils.sheet_to_json(book.Sheets[name], { header: 1, raw: true, defval: null }) as unknown[][];
+      const found = ccFromSpreadsheet(rows, defaults);
+      if (found.items.length) return found;
+      error ||= `A aba "${name}" não tem nenhuma linha com material e quantidade.`;
+    } catch (e) {
+      error ||= (e as Error).message;
+    }
+  }
+  throw Error(error || `"${file.name}" está vazia.`);
+}
 /** Itens e textos de "Remarks" a partir dos Scrap Forms escolhidos; texto editado à mão é mantido. */
 function withScrapForms(data: CcFormData, add: ScrapForm[], all: ScrapForm[]): CcFormData {
   const defaults = ccDefaultsOf(data.items.filter((item) => !blankCcItem(item)).at(-1) || data.items.at(-1) || store.json<CcDefaults>(CC_DEFAULTS_KEY));
@@ -1839,6 +1871,7 @@ function CcFormDialog({
     [sapDocument, setSapDocument] = useState(form?.data.sapDocument || ""),
     [picked, setPicked] = useState<Set<string>>(new Set()),
     [mm60, setMm60] = useState<Mm60 | null>(null);
+  const sheetInput = useRef<HTMLInputElement>(null);
   const editable = canEdit && (!form || form.status === "draft" || isTranscription(form));
   const problems = useMemo(() => ccProblems(data), [data]);
   const history = useMemo(() => formHistory(scrapForms), [scrapForms]);
@@ -1898,6 +1931,57 @@ function CcFormDialog({
   }
   function setItem(index: number, patch: Partial<CcItem>) {
     change({ ...data, items: data.items.map((item, i) => (i === index ? { ...item, ...patch } : item)) });
+  }
+  // Tabela compacta: funções estáveis para as linhas não serem redesenhadas a cada tecla.
+  const patchItem = useCallback((index: number, patch: Partial<CcItem>) => {
+    setData((current) => ({ ...current, items: current.items.map((item, i) => (i === index ? { ...item, ...patch } : item)) }));
+    setDirty(true);
+    setMessage(null);
+  }, []);
+  const removeItem = useCallback((index: number) => {
+    filled.current = shiftIndex(filled.current, index, -1);
+    setData((current) => ({ ...current, items: current.items.length > 1 ? current.items.filter((_, i) => i !== index) : current.items }));
+    setDirty(true);
+    setMessage(null);
+  }, []);
+  function applyCostCenter(costCenter: string, costCenterDescription: string) {
+    const old = data.items.at(-1);
+    const action = old && data.action ? data.action.split(`${old.costCenter} - ${old.costCenterDescription}`).join(`${costCenter} - ${costCenterDescription}`) : data.action;
+    change({ ...data, action, items: data.items.map((item) => ({ ...item, costCenter, costCenterDescription })) });
+    setMessage({ kind: "ok", text: `Centro de custo ${costCenter} - ${costCenterDescription} aplicado aos ${data.items.length} itens.` });
+  }
+  function clearItems() {
+    if (!window.confirm(`Tirar os ${data.items.length} itens desta baixa?`)) return;
+    filled.current = new Map();
+    change({ ...data, items: [emptyCcItem(CC_DEFAULTS, data.items.at(-1))] });
+  }
+  async function importSheet(file: File | undefined) {
+    if (!file) return;
+    await run("sheet", async () => {
+      const kept = data.items.filter((item) => !blankCcItem(item));
+      const found = await readCcSheet(file, ccDefaultsOf(kept.at(-1) || data.items.at(-1) || store.json<CcDefaults>(CC_DEFAULTS_KEY)));
+      const items = [...kept, ...found.items];
+      if (items.length > MAX_CC_ITEMS)
+        throw Error(
+          kept.length
+            ? `A planilha tem ${found.items.length} itens e esta baixa já tem ${kept.length}: passaria de ${MAX_CC_ITEMS}. Faça uma baixa nova para a planilha ou divida o arquivo.`
+            : `A planilha tem ${found.items.length} itens; cabem ${MAX_CC_ITEMS} por formulário. Divida o arquivo em mais de uma baixa.`,
+        );
+      const keptIndex = data.items.map((item, index) => (blankCcItem(item) ? -1 : index)).filter((index) => index >= 0);
+      filled.current = new Map(keptIndex.flatMap((old, index) => (filled.current.has(old) ? [[index, filled.current.get(old)!] as [number, string]] : [])));
+      change({ ...data, items, mainReason: data.mainReason || found.mainReason, reason: data.reason || found.reason, action: data.action || found.action });
+      const total = ccTotals({ items: found.items });
+      const pages = ccPages(items.length);
+      setMessage({
+        kind: "ok",
+        text:
+          `${found.items.length} itens importados de "${file.name}" · Qtd. ${qtyInput(total.quantity)} · ${brMoney(total.cost)}.` +
+          (found.skipped ? ` ${found.skipped} linha(s) sem material ou quantidade ficaram de fora.` : "") +
+          ` Estoque vira quantidade negativa (baixa); custo unitário = valor ÷ quantidade.` +
+          (pages > 1 ? ` O PDF vai ter ${pages} páginas (assinaturas na 1ª).` : "") +
+          ` Confira o centro de custo e os textos de Remarks.`,
+      });
+    });
   }
   function close() {
     const unsaved = (editable && dirty && data.items.some((item) => item.material || item.description)) || (!editable && !!form && sapDocument !== form.data.sapDocument);
@@ -2065,7 +2149,10 @@ function CcFormDialog({
                   </option>
                 ))}
               </datalist>
-              {data.items.map((item, index) => (
+              {data.items.length >= CC_COMPACT_FROM ? (
+                <CcItemsGrid items={data.items} missing={missingByItem} onChange={patchItem} onRemove={removeItem} onApplyCostCenter={applyCostCenter} />
+              ) : (
+                data.items.map((item, index) => (
                 <CcItemEditor
                   key={index}
                   index={index}
@@ -2087,17 +2174,46 @@ function CcFormDialog({
                     change({ ...data, items: [...data.items.slice(0, index + 1), { ...item }, ...data.items.slice(index + 1)] });
                   }}
                 />
-              ))}
+                ))
+              )}
               <div className="scrap-actions">
                 <button disabled={data.items.length >= MAX_CC_ITEMS} onClick={() => change({ ...data, items: [...data.items, emptyCcItem(CC_DEFAULTS, data.items.at(-1))] })}>
                   <Plus size={16} />
                   Adicionar item
                 </button>
+                <button
+                  className="cc-sheet-button"
+                  disabled={!!busy || data.items.filter((item) => !blankCcItem(item)).length >= MAX_CC_ITEMS}
+                  onClick={() => sheetInput.current?.click()}
+                  title="Planilha com Material, Texto breve material, Centro, Depósito, Utilização livre e Val.utiliz.livre (ex.: LOSS 7000.xlsx). Cada linha vira um item."
+                >
+                  <FileSpreadsheet size={16} />
+                  {busy === "sheet" ? "Lendo planilha…" : "Importar Excel"}
+                </button>
+                <input
+                  ref={sheetInput}
+                  type="file"
+                  accept=".xlsx,.xls,.xlsm,.csv"
+                  hidden
+                  aria-label="Planilha de itens da baixa"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    e.target.value = "";
+                    void importSheet(file);
+                  }}
+                />
                 <button disabled={!!busy} onClick={readMm60} title="Lê a aba MM60 da planilha e preenche os custos vazios">
                   <RefreshCw size={16} className={busy === "mm60" ? "spin" : ""} />
                   {busy === "mm60" ? "Lendo MM60…" : "Buscar custos na MM60"}
                 </button>
+                {data.items.length > 1 && (
+                  <button type="button" onClick={clearItems}>
+                    <Trash2 size={16} />
+                    Limpar itens
+                  </button>
+                )}
                 {data.items.length >= MAX_CC_ITEMS && <small>Máximo de {MAX_CC_ITEMS} itens: faça outra baixa para o restante.</small>}
+                {data.items.length > 20 && data.items.length < MAX_CC_ITEMS && <small>PDF com {ccPages(data.items.length)} páginas: 20 itens e as assinaturas na 1ª, o resto nas seguintes.</small>}
               </div>
             </fieldset>
           ) : (
@@ -2228,7 +2344,7 @@ function CcItemEditor({
   onRemove: () => void;
   onDuplicate: () => void;
 }) {
-  const [cost, setCost] = useNumberText(item.unitCost, moneyInput);
+  const [cost, setCost] = useNumberText(item.unitCost, costInput);
   const [quantity, setQuantity] = useNumberText(item.quantity, qtyInput);
   const field = (name: string) => (missing.has(name) ? "missing" : "");
   const hints: Hint[] = [];
@@ -2322,6 +2438,142 @@ function CcItemEditor({
   );
 }
 
+/** Lista longa (planilha): uma linha por item, todos os campos editáveis. */
+function CcItemsGrid({
+  items,
+  missing,
+  onChange,
+  onRemove,
+  onApplyCostCenter,
+}: {
+  items: CcItem[];
+  missing: Set<string>[];
+  onChange: (index: number, patch: Partial<CcItem>) => void;
+  onRemove: (index: number) => void;
+  onApplyCostCenter: (costCenter: string, description: string) => void;
+}) {
+  const last = items.at(-1);
+  const [costCenter, setCostCenter] = useState(last?.costCenter || CC_DEFAULTS.costCenter),
+    [description, setDescription] = useState(last?.costCenterDescription || CC_DEFAULTS.costCenterDescription);
+  const mixed = new Set(items.map((item) => `${item.costCenter}|${item.costCenterDescription}`)).size > 1;
+  const same = !mixed && last?.costCenter === costCenter.trim().toUpperCase() && last?.costCenterDescription === description.trim();
+  return (
+    <>
+      <div className="cc-bulk">
+        <label>
+          Centro de custo de todos os itens
+          <input value={costCenter} maxLength={20} placeholder="BR000411" onChange={(e) => setCostCenter(e.target.value.toUpperCase())} />
+        </label>
+        <label>
+          Descrição do centro de custo
+          <input value={description} maxLength={80} placeholder="Operational - Chassis" onChange={(e) => setDescription(e.target.value)} />
+        </label>
+        <button type="button" disabled={!costCenter.trim() || !description.trim() || same} onClick={() => onApplyCostCenter(costCenter.trim(), description.trim())}>
+          Aplicar aos {items.length} itens
+        </button>
+      </div>
+      <div className="scrap-items-table cc-edit-table">
+        <table>
+          <colgroup>
+            {[34, 66, 66, 66, 130, 280, 92, 104, 112, 108, 190, 42].map((width, index) => (
+              <col key={index} style={{ width }} />
+            ))}
+          </colgroup>
+          <thead>
+            <tr>
+              {["#", "Company", "Plant", "WH", "Material", "Descrição", "Qtd. (− = saída)", "Custo unit. (R$)", "Total", "Centro de custo", "Descrição CC", ""].map((label, index) => (
+                <th key={index}>{label}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {items.map((item, index) => (
+              <CcItemRow key={index} index={index} item={item} missing={[...(missing[index] || [])].join(",")} canRemove={items.length > 1} onChange={onChange} onRemove={onRemove} />
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </>
+  );
+}
+
+const CcItemRow = memo(function CcItemRow({
+  index,
+  item,
+  missing,
+  canRemove,
+  onChange,
+  onRemove,
+}: {
+  index: number;
+  item: CcItem;
+  missing: string;
+  canRemove: boolean;
+  onChange: (index: number, patch: Partial<CcItem>) => void;
+  onRemove: (index: number) => void;
+}) {
+  const [cost, setCost] = useNumberText(item.unitCost, costInput);
+  const [quantity, setQuantity] = useNumberText(item.quantity, qtyInput);
+  const missed = missing ? missing.split(",") : [];
+  const field = (name: string) => (missed.includes(name) ? "missing" : undefined);
+  const NAMES: Record<string, string> = { company: "Company", plant: "Plant", wh: "WH", costCenter: "Centro de custo" };
+  const label = (name: string) => `${NAMES[name] || name} do item ${index + 1}`;
+  const text = (key: "company" | "plant" | "wh" | "costCenter", max: number, placeholder = "") => (
+    <input className={field(key)} aria-label={label(key)} value={item[key]} maxLength={max} placeholder={placeholder} onChange={(e) => onChange(index, { [key]: e.target.value.toUpperCase() })} />
+  );
+  return (
+    <tr className={item.quantity !== null && item.quantity > 0 ? "cc-row-in" : undefined}>
+      <td className="num">{index + 1}</td>
+      <td>{text("company", 10)}</td>
+      <td>{text("plant", 10)}</td>
+      <td>{text("wh", 10)}</td>
+      <td>
+        <input className={field("material")} aria-label={label("Material")} list="cc-materials" value={item.material} maxLength={40} onChange={(e) => onChange(index, { material: materialCode(e.target.value) })} />
+      </td>
+      <td>
+        <input className={field("description")} aria-label={label("Descrição")} value={item.description} maxLength={120} title={item.description} onChange={(e) => onChange(index, { description: e.target.value })} />
+      </td>
+      <td>
+        <input
+          className={field("quantity")}
+          aria-label={label("Quantidade")}
+          inputMode="decimal"
+          value={quantity}
+          title={item.quantity !== null && item.quantity > 0 ? "Positiva = entrada no estoque. Para baixa, use negativo." : undefined}
+          onChange={(e) => {
+            setQuantity(e.target.value);
+            onChange(index, { quantity: parseBrNumber(e.target.value) });
+          }}
+        />
+      </td>
+      <td>
+        <input
+          className={field("unitCost")}
+          aria-label={label("Custo unitário")}
+          inputMode="decimal"
+          value={cost}
+          onChange={(e) => {
+            setCost(e.target.value);
+            onChange(index, { unitCost: parseBrNumber(e.target.value) });
+          }}
+        />
+      </td>
+      <td className="num">{brMoney(ccItemTotal(item)) || "—"}</td>
+      <td>{text("costCenter", 20)}</td>
+      <td>
+        <input className={field("costCenterDescription")} aria-label={label("Descrição do centro de custo")} value={item.costCenterDescription} maxLength={80} onChange={(e) => onChange(index, { costCenterDescription: e.target.value })} />
+      </td>
+      <td>
+        {canRemove && (
+          <button type="button" className="cc-row-remove" onClick={() => onRemove(index)} aria-label={`Remover item ${index + 1}`}>
+            <Trash2 size={14} />
+          </button>
+        )}
+      </td>
+    </tr>
+  );
+});
+
 function CcItemsTable({ items }: { items: CcItem[] }) {
   return (
     <div className="scrap-items-table cc-items-table">
@@ -2342,7 +2594,7 @@ function CcItemsTable({ items }: { items: CcItem[] }) {
               <td className="code">{item.material}</td>
               <td>{item.description}</td>
               <td className="num">{qtyInput(item.quantity)}</td>
-              <td className="num">{brMoney(item.unitCost)}</td>
+              <td className="num">{unitCostText(item.unitCost)}</td>
               <td className="num">{brMoney(ccItemTotal(item))}</td>
               <td>{item.costCenter}</td>
               <td>{item.costCenterDescription}</td>
@@ -2389,8 +2641,8 @@ async function reviewUpload(kind: DocKind, form: AnyForm, name: string, bytes: U
     else {
       if (!comparison.sameContent)
         blockers.push(
-          comparison.pages !== 1
-            ? `O PDF tem ${comparison.pages} páginas, diferente ${origin}. Assinem o PDF baixado aqui.`
+          comparison.pages !== comparison.originalPages
+            ? `O PDF tem ${comparison.pages} página(s) e o ${origin.slice(3)} tem ${comparison.originalPages}. Assinem o PDF baixado aqui.`
             : `O conteúdo da página não é o mesmo ${origin} (itens, valores ou nomes diferentes, ou PDF de outra versão). Assinem o PDF baixado aqui.`,
         );
       if (comparison.extraAnnotations.length)
@@ -2608,7 +2860,6 @@ function PdfCheckDialog({ open, onClose }: { open: boolean; onClose: () => void 
             </p>
             <SignatureList signatures={result.reading.signatures} />
             {empty.length > 0 && <p className="scrap-review-warn">Campos ainda sem assinatura: {empty.map((field) => field.name).join(", ")}.</p>}
-            {result.reading.pages > 1 && <p className="scrap-review-warn">O PDF tem {result.reading.pages} páginas; os formulários gerados pelo portal têm uma só.</p>}
           </div>
         )}
         <div className="dialog-actions">

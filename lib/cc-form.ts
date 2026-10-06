@@ -19,7 +19,8 @@ import {
   type ScrapForm,
 } from "./scrap-form.ts";
 
-export const MAX_CC_ITEMS = 20;
+/** Página 1 com 20 itens e o quadro de aprovação; o resto vai em páginas de continuação. */
+export const MAX_CC_ITEMS = 300;
 export const CC_TITLE = "FO.FI.C.007 - INVENTORY ADJUSTMENT";
 
 export type CcItem = {
@@ -240,3 +241,117 @@ export function summarizeCcForms(forms: CcForm[]) {
   return { open, signed, drafts: forms.filter((form) => form.status === "draft").length, valueOpen: cents(valueOpen) };
 }
 
+
+/* ------------------------------------------------------------------------ */
+/* Itens a partir de uma planilha (ex.: LOSS 7000.xlsx, exportada da MB52)   */
+/* ------------------------------------------------------------------------ */
+
+const plain = (value: unknown) =>
+  String(value ?? "")
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "");
+const SHEET_COLUMNS: Record<string, string[]> = {
+  material: ["material", "codigo", "codigosap", "materialcode", "sap", "partnumber", "pn", "pnsap"],
+  description: ["textobrevematerial", "textobrevedematerial", "textobreve", "descricao", "descricaodomaterial", "descriptionofmaterial", "description"],
+  company: ["company", "empresa"],
+  plant: ["centro", "plant"],
+  wh: ["deposito", "wh", "storagelocation", "sloc"],
+  stock: ["utilizacaolivre", "utilizlivre", "estoquelivre", "estoque", "saldo", "unrestricted"],
+  quantity: ["quantidade", "qtd", "qty", "quantity", "qtde"],
+  value: ["valutilizlivre", "valutilizacaolivre", "valorutilizacaolivre", "valorlivre", "valor", "valortotal", "totalcost", "custototal", "montante"],
+  unitCost: ["custounitario", "custounit", "unitcost", "precounitario", "precomedio", "preco"],
+  costCenter: ["centrodecusto", "costcenter", "cc"],
+  costCenterDescription: ["descricaodocentrodecusto", "costcenterdescription", "descricaocc"],
+  comment: ["comentarios", "comentario", "observacao", "observacoes", "motivo", "reason"],
+};
+/** Número de célula do Excel: número de verdade ou texto "R$ 1.471,23" / "1,471.23" / "10-". */
+export function sheetNumber(value: unknown): number | null {
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+  let text = String(value ?? "")
+    .replace(/R\$|\s| /g, "")
+    .trim();
+  if (!text) return null;
+  let negative = false;
+  if (/^-|-$|^\(.*\)$/.test(text)) {
+    negative = true;
+    text = text.replace(/^-|-$|^\(|\)$/g, "");
+  }
+  if (!/^[\d.,]+$/.test(text)) return null;
+  const comma = text.lastIndexOf(","),
+    dot = text.lastIndexOf(".");
+  if (comma >= 0 && dot >= 0) text = comma > dot ? text.replace(/\./g, "").replace(",", ".") : text.replace(/,/g, "");
+  else if (comma >= 0) text = /,\d{3}$/.test(text) && text.split(",").length > 2 ? text.replace(/,/g, "") : text.replace(",", ".");
+  else if (/^\d{1,3}(\.\d{3}){2,}$/.test(text)) text = text.replace(/\./g, "");
+  const parsed = Number(text);
+  return Number.isFinite(parsed) ? (negative ? -parsed : parsed) : null;
+}
+
+/** Custo unitário com o mínimo de casas que ainda dá o total da planilha (centavo a centavo). */
+function unitFromTotal(total: number, quantity: number) {
+  const raw = Math.abs(total) / Math.abs(quantity);
+  for (let digits = 2; digits <= 8; digits++) {
+    const unit = Math.round(raw * 10 ** digits) / 10 ** digits;
+    if (cents(quantity * unit) === cents(Math.sign(quantity) * Math.abs(total))) return unit;
+  }
+  return Math.round(raw * 1e8) / 1e8;
+}
+
+/**
+ * Linhas de uma planilha (primeira aba, com cabeçalho) → itens do FO.FI.C.007.
+ * "Utilização livre" (estoque) vira baixa: quantidade negativa. Uma coluna
+ * "Quantidade" mantém o sinal que veio. Custo unitário = valor ÷ quantidade
+ * quando a planilha só traz o valor total.
+ */
+export function ccFromSpreadsheet(rows: unknown[][], defaults: Partial<CcDefaults> = {}) {
+  const base = { ...CC_DEFAULTS, ...Object.fromEntries(Object.entries(defaults).filter(([, value]) => value)) } as CcDefaults;
+  const headerIndex = rows.findIndex((row) => Array.isArray(row) && row.some((cell) => SHEET_COLUMNS.material.includes(plain(cell))));
+  if (headerIndex < 0) throw Error("Não achei a coluna Material na planilha. A primeira linha da tabela tem de ter os nomes das colunas.");
+  const header = rows[headerIndex].map(plain);
+  const column = (key: string) => header.findIndex((name) => SHEET_COLUMNS[key].includes(name));
+  const at = Object.fromEntries(Object.keys(SHEET_COLUMNS).map((key) => [key, column(key)])) as Record<string, number>;
+  const quantityColumn = at.stock >= 0 ? at.stock : at.quantity;
+  if (quantityColumn < 0) throw Error('Não achei a coluna de quantidade (por exemplo "Utilização livre" ou "Quantidade").');
+  if (at.unitCost < 0 && at.value < 0) throw Error('Não achei o custo: a planilha precisa de "Val.utiliz.livre" (valor total) ou de um custo unitário.');
+  const cell = (row: unknown[], index: number) => (index >= 0 ? row[index] : undefined);
+  const text = (row: unknown[], index: number) => String(cell(row, index) ?? "").trim();
+  const items: CcItem[] = [];
+  const comments = new Set<string>();
+  let skipped = 0;
+  for (const row of rows.slice(headerIndex + 1)) {
+    if (!Array.isArray(row)) continue;
+    const material = materialCode(text(row, at.material));
+    const amount = sheetNumber(cell(row, quantityColumn));
+    if (!material || amount === null || amount === 0) {
+      if (row.some((value) => String(value ?? "").trim())) skipped++;
+      continue;
+    }
+    const quantity = at.stock >= 0 ? -Math.abs(amount) : amount;
+    const unit = sheetNumber(cell(row, at.unitCost));
+    const value = sheetNumber(cell(row, at.value));
+    const unitCost = unit !== null ? Math.abs(unit) : value !== null ? unitFromTotal(value, quantity) : null;
+    const comment = text(row, at.comment);
+    if (comment) comments.add(comment);
+    items.push({
+      company: (text(row, at.company) || base.company).toUpperCase().slice(0, 10),
+      plant: (text(row, at.plant) || base.plant).toUpperCase().slice(0, 10),
+      wh: (text(row, at.wh) || base.wh).toUpperCase().slice(0, 10),
+      material: material.slice(0, 40),
+      description: text(row, at.description).slice(0, 120),
+      quantity,
+      unitCost,
+      costCenter: (text(row, at.costCenter) || base.costCenter).toUpperCase().slice(0, 20),
+      costCenterDescription: (text(row, at.costCenterDescription) || base.costCenterDescription).slice(0, 80),
+    });
+  }
+  const reason = comments.size === 1 ? [...comments][0] : "";
+  const warehouses = [...new Set(items.map((item) => item.wh))].join(", ");
+  return {
+    items,
+    skipped,
+    reason,
+    mainReason: reason ? `Materials listed as ${reason} in warehouse ${warehouses}.` : "",
+    action: items.length ? `Write off the quantities from warehouse ${warehouses} through cost center ${base.costCenter} - ${base.costCenterDescription}.` : "",
+  };
+}
