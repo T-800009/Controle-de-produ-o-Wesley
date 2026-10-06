@@ -1505,6 +1505,25 @@ test('BAIXA EM CC: Importar Excel preenche todos os itens, aplica o centro de cu
  ui.assertHealthy();
 });
 
+test('BAIXA EM CC: Baixa pelo Excel na lista já abre a baixa preenchida, pronta para gerar o PDF',async t=>{
+ const server=scrapServer();
+ const ui=await mount(t,{url:'https://portal.test/?modulo=baixas&doc=cc',respond:server.respond});
+ await ui.settle(()=>[...ui.container.querySelectorAll('.scrap-forms button')].some(button=>button.textContent.trim()==='Baixa pelo Excel'));
+ assert.equal(document.querySelector('.cc-dialog'),null);
+ await attachSheet(ui.container.querySelector('input[aria-label="Planilha para nova baixa"]'),lossWorkbook(8),'LOSS 7000.xlsx');
+ await ui.settle(()=>/8 itens importados de "LOSS 7000\.xlsx"/.test(document.querySelector('.cc-dialog .scrap-message.ok')?.textContent||''));
+ assert.match(document.querySelector('.cc-dialog .scrap-message.ok').textContent,/clique em Gerar PDF para assinatura/);
+ assert.equal(document.querySelectorAll('.cc-dialog .scrap-item').length,8,'Lista curta: um cartão por item');
+ assert.equal(document.querySelector('.cc-dialog .scrap-item .f-pn input').value,'20000001-00');
+ assert.equal(document.querySelector('.cc-remarks input').value,'LOSS');
+ await pressIn(ui,'.cc-dialog button','Gerar PDF para assinatura');
+ await ui.settle(()=>/CC-2026-0001 · Aguardando assinatura/.test(document.querySelector('.cc-dialog h2')?.textContent||''));
+ const create=server.state.posts.find(post=>post.action==='create');
+ assert.equal(create.data.items.length,8);assert.equal(create.data.reason,'LOSS');
+ await closeDialog(ui);
+ ui.assertHealthy();
+});
+
 // MB51-65 · Importar os formulários que já existiam (Excel → PDF assinado no Adobe).
 const legacyFixture=name=>new Uint8Array(fs.readFileSync(path.join(__dirname,'fixtures','legado',name)));
 async function attachMany(input,files){

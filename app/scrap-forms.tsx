@@ -359,7 +359,7 @@ function statusText(kind: DocKind, form: AnyForm) {
 
 /** Abre o formulário do link (?scrap= / ?cc=) quando a lista chega; some se o formulário for apagado. */
 function useOpened<F extends AnyForm>(docs: DocList<F>, deepLink: string | null, onLinkUsed: () => void) {
-  const [opened, setOpened] = useState<{ id: string | null; session: number; preset?: string[] } | null>(null);
+  const [opened, setOpened] = useState<{ id: string | null; session: number; preset?: string[]; sheet?: File } | null>(null);
   const forms = docs.list?.forms || [];
   useEffect(() => {
     if (!deepLink || !docs.list) return;
@@ -657,6 +657,7 @@ function CcFormList({
     [month, setMonth] = useState("all");
   const deferredQuery = useDeferredValue(query);
   const { opened, setOpened, current } = useOpened(docs, deepLink, onLinkUsed);
+  const sheetInput = useRef<HTMLInputElement>(null);
 
   const forms = list?.forms || [];
   const scrapForms = scrapDocs.list?.forms || [];
@@ -685,7 +686,7 @@ function CcFormList({
           <p className="eyebrow">FO.FI.C.007 - INVENTORY ADJUSTMENT</p>
           <h3>Baixa em centro de custo</h3>
           <p>
-            O portal monta o FO.FI.C.007 a partir dos Scrap Forms assinados (ou item a item), gera o PDF com os quatro
+            O portal monta o FO.FI.C.007 a partir dos Scrap Forms assinados, de uma planilha Excel (ex.: LOSS 7000) ou item a item, gera o PDF com os quatro
             quadros de assinatura obrigatórios (Solicitante, Gestor, SCM e Financeiro) e guarda o PDF final quando todos
             assinarem.
           </p>
@@ -696,6 +697,30 @@ function CcFormList({
               <FilePlus2 size={16} />
               Nova baixa em CC
             </button>
+          )}
+          {list?.canEdit && (
+            <>
+              <button
+                className="primary"
+                onClick={() => sheetInput.current?.click()}
+                title="Escolha a planilha (Material, Texto breve material, Centro, Depósito, Utilização livre, Val.utiliz.livre): a baixa abre com todos os itens preenchidos"
+              >
+                <FileSpreadsheet size={16} />
+                Baixa pelo Excel
+              </button>
+              <input
+                ref={sheetInput}
+                type="file"
+                accept=".xlsx,.xls,.xlsm,.csv"
+                hidden
+                aria-label="Planilha para nova baixa"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  e.target.value = "";
+                  if (file) setOpened({ id: null, session: Date.now(), sheet: file });
+                }}
+              />
+            </>
           )}
           {list?.canEdit && (
             <button onClick={onImport} title="Cadastra os formulários que já existem (PDF do Excel assinado no Adobe)">
@@ -811,7 +836,7 @@ function CcFormList({
             <div className="empty">
               <FileText size={30} />
               <h3>{hasFilters ? "Nenhuma baixa neste filtro" : "Nenhum FO.FI.C.007 ainda"}</h3>
-              <p>{hasFilters ? "Ajuste os filtros." : list.canEdit ? "Clique em Nova baixa em CC: dá para puxar os itens dos Scrap Forms assinados." : "As baixas preenchidas aparecem aqui."}</p>
+              <p>{hasFilters ? "Ajuste os filtros." : list.canEdit ? "Clique em Baixa pelo Excel para mandar a planilha, ou em Nova baixa em CC para puxar os Scrap Forms assinados." : "As baixas preenchidas aparecem aqui."}</p>
             </div>
           ) : (
             <div className="scrap-list" role="list" aria-label="Baixas em centro de custo">
@@ -866,6 +891,7 @@ function CcFormList({
           forms={forms}
           scrapForms={scrapForms}
           preset={opened.preset || []}
+          sheet={opened.sheet || null}
           canEdit={list.canEdit}
           canDelete={list.canDelete}
           onSaved={(form) => {
@@ -1846,6 +1872,7 @@ function CcFormDialog({
   forms,
   scrapForms,
   preset,
+  sheet = null,
   canEdit,
   canDelete,
   onSaved,
@@ -1856,6 +1883,8 @@ function CcFormDialog({
   forms: CcForm[];
   scrapForms: ScrapForm[];
   preset: string[];
+  /** Planilha escolhida na lista ("Baixa pelo Excel"): a baixa já abre com os itens. */
+  sheet?: File | null;
   canEdit: boolean;
   canDelete: boolean;
   onSaved: (form: CcForm) => void;
@@ -1889,6 +1918,12 @@ function CcFormDialog({
       setSapDocument(form.data.sapDocument);
     }
   }, [form?.revision]);
+  const sheetRead = useRef(false);
+  useEffect(() => {
+    if (!sheet || form || sheetRead.current) return;
+    sheetRead.current = true;
+    void importSheet(sheet);
+  }, [sheet]);
 
   // Descrição pela BOM (ou pelos Scrap Forms) uma vez por código, só se estiver vazia.
   const filled = useRef(new Map<number, string>());
@@ -1979,7 +2014,7 @@ function CcFormDialog({
           (found.skipped ? ` ${found.skipped} linha(s) sem material ou quantidade ficaram de fora.` : "") +
           ` Estoque vira quantidade negativa (baixa); custo unitário = valor ÷ quantidade.` +
           (pages > 1 ? ` O PDF vai ter ${pages} páginas (assinaturas na 1ª).` : "") +
-          ` Confira o centro de custo e os textos de Remarks.`,
+          ` Confira o centro de custo e clique em Gerar PDF para assinatura.`,
       });
     });
   }
@@ -2065,7 +2100,7 @@ function CcFormDialog({
           <DialogDescription>
             {form
               ? `FO.FI.C.007 · ${periodLabel(data.period)} · criado em ${brDateTime(form.createdAt)}${form.status === "signed" && form.signedAt ? ` · assinado por todos em ${brDateTime(form.signedAt)}` : ""}${form.sentAt ? ` · enviado em ${brDateTime(form.sentAt)}` : ""}${form.data.source ? ` · importado de "${form.data.source}"` : ""}`
-              : "Puxe os itens dos Scrap Forms assinados ou preencha à mão. Quantidade negativa = saída do estoque (baixa)."}
+              : "Importe a planilha Excel, puxe os itens dos Scrap Forms assinados ou preencha à mão. Quantidade negativa = saída do estoque (baixa)."}
           </DialogDescription>
         </DialogHeader>
 
@@ -2177,18 +2212,18 @@ function CcFormDialog({
                 ))
               )}
               <div className="scrap-actions">
-                <button disabled={data.items.length >= MAX_CC_ITEMS} onClick={() => change({ ...data, items: [...data.items, emptyCcItem(CC_DEFAULTS, data.items.at(-1))] })}>
-                  <Plus size={16} />
-                  Adicionar item
-                </button>
                 <button
-                  className="cc-sheet-button"
+                  className={data.items.every(blankCcItem) ? "primary" : ""}
                   disabled={!!busy || data.items.filter((item) => !blankCcItem(item)).length >= MAX_CC_ITEMS}
                   onClick={() => sheetInput.current?.click()}
                   title="Planilha com Material, Texto breve material, Centro, Depósito, Utilização livre e Val.utiliz.livre (ex.: LOSS 7000.xlsx). Cada linha vira um item."
                 >
                   <FileSpreadsheet size={16} />
                   {busy === "sheet" ? "Lendo planilha…" : "Importar Excel"}
+                </button>
+                <button disabled={data.items.length >= MAX_CC_ITEMS} onClick={() => change({ ...data, items: [...data.items, emptyCcItem(CC_DEFAULTS, data.items.at(-1))] })}>
+                  <Plus size={16} />
+                  Adicionar item
                 </button>
                 <input
                   ref={sheetInput}
