@@ -1,0 +1,149 @@
+/* DOSSIÊ WAREHOUSE — mesma linguagem visual dos módulos Warehouse e Scrap Form. */
+.dossie { padding:6px 24px 20px; min-width:0; }
+.dossie>.notice { margin:12px 0; }
+.dossie-metrics .dossie-metric-value strong { font-size:26px; letter-spacing:-.5px; }
+.warehouse-filters.dossie-filters { grid-template-columns:minmax(240px,2fr) minmax(170px,1fr); }
+
+/* Status */
+.dossie-status { display:inline-block; padding:3px 8px; border-radius:5px; font-size:11px; line-height:1.45; font-style:normal; font-weight:600; border:1px solid #ffffff2a; color:#d3dbe5; background:#ffffff06; white-space:nowrap; }
+.dossie-status.sent { border-color:#e0b75c88; color:#f2cf7f; background:#e0b75c12; }
+.dossie-status.answered { border-color:#7fa7d988; color:#b9d3f3; background:#5b8fd114; }
+.dossie-status.closed { border-color:#56c08d88; color:#a7efc8; background:#2f9e6a14; }
+.dossie-late { color:#ff8a94 !important; font-weight:600; }
+
+/* Lista */
+.dossie-list { display:flex; flex-direction:column; margin-top:20px; border:1px solid var(--ui-line); border-radius:10px; overflow:hidden; }
+.dossie-list-head, .shell .dossie-row { display:grid; grid-template-columns:minmax(130px,.8fr) minmax(200px,1.6fr) minmax(240px,2fr) minmax(120px,.8fr) minmax(170px,1.1fr); gap:14px; align-items:center; padding:14px 18px; }
+.dossie-list-head { background:#171e28; color:#b9c3d0; font-size:10px; letter-spacing:.5px; text-transform:uppercase; }
+.dossie-list-head span:nth-child(4) { text-align:right; }
+.shell .dossie-row { width:100%; border:0; border-top:1px solid var(--ui-line); border-radius:0; background:transparent; color:var(--ui-text); text-align:left; font-weight:400; justify-content:stretch; }
+.shell .dossie-row:hover { background:#ffffff07; }
+.shell .dossie-row.late { box-shadow:inset 3px 0 0 #e32636; }
+.dossie-row>span { display:flex; flex-direction:column; gap:5px; min-width:0; }
+.dossie-row b { font-size:13px; overflow-wrap:anywhere; }
+.dossie-row small { font-size:11px; line-height:1.45; color:var(--ui-muted); overflow-wrap:anywhere; }
+.dossie-row-id { align-items:flex-start; }
+.dossie-row-value { align-items:flex-end; text-align:right; font-variant-numeric:tabular-nums; }
+.dossie-row.late .dossie-row-track small:first-child { color:#ff8a94; }
+
+/* Importação */
+.dossie-dialog { max-width:min(1100px,96vw) !important; }
+.dossie-howto { margin:0; padding-left:18px; display:flex; flex-direction:column; gap:6px; font-size:12px; line-height:1.55; color:var(--ui-muted); }
+.dossie-howto b { color:var(--ui-text); font-weight:600; }
+.dossie-paste, .dossie-detail textarea, .dossie-dialog textarea { width:100%; min-width:0; border:1px solid #ffffff26; border-radius:7px; padding:9px 11px; color:var(--ui-text); background:#0b1017; font:inherit; font-size:13px; line-height:1.5; resize:vertical; }
+.dossie-paste { font-family:ui-monospace,SFMono-Regular,Consolas,monospace; font-size:12px; white-space:pre; overflow:auto; }
+.scrap-dialog .dossie-target { flex-direction:row; align-items:center; gap:8px; margin-left:auto; }
+.scrap-dialog .dossie-target input { width:90px; min-height:36px; }
+.scrap-dialog .dossie-inline-field { flex-direction:row; align-items:center; gap:10px; flex-wrap:wrap; font-size:12px; }
+.scrap-dialog .dossie-inline-field select { width:auto; min-width:220px; }
+.dossie-candidates { display:flex; flex-direction:column; border:1px solid var(--ui-line); border-radius:9px; overflow:hidden; }
+.scrap-dialog .dossie-candidate { display:grid; grid-template-columns:22px minmax(150px,1fr) minmax(220px,2fr) minmax(120px,.8fr); gap:12px; align-items:start; padding:12px 14px; border-top:1px solid var(--ui-line); color:var(--ui-text); font-size:12px; cursor:pointer; }
+.scrap-dialog .dossie-candidate:first-child { border-top:0; }
+.scrap-dialog .dossie-candidate input { width:18px; min-height:18px; height:18px; margin-top:2px; accent-color:#e32636; }
+.scrap-dialog .dossie-candidate.disabled { cursor:default; opacity:.62; }
+.dossie-candidate>span { display:flex; flex-direction:column; gap:4px; min-width:0; }
+.dossie-candidate small { color:var(--ui-muted); font-size:11px; line-height:1.45; overflow-wrap:anywhere; }
+.dossie-candidate small b { color:var(--ui-text); font-weight:600; }
+.dossie-candidate-value { align-items:flex-end; text-align:right; }
+.dossie-candidate .dossie-taken { color:#f2cf7f; }
+.dossie-candidate .dossie-problem { color:#ffb0b7; }
+
+/* Detalhe */
+.shell .dossie-back { padding:4px 0 14px; font-size:13px; color:var(--ui-muted); }
+.dossie-head { display:flex; justify-content:space-between; align-items:flex-start; gap:20px; flex-wrap:wrap; padding:4px 0 20px; }
+.dossie-head h3 { margin:6px 0 8px; font-size:24px; letter-spacing:-.5px; overflow-wrap:anywhere; }
+.dossie-head h3 span { display:block; margin-top:4px; font-size:14px; font-weight:400; letter-spacing:0; color:var(--ui-muted); }
+.dossie-head-status { display:flex; flex-wrap:wrap; align-items:center; gap:8px 14px; margin:0; font-size:12px; color:var(--ui-muted); }
+.dossie-actions { flex-wrap:wrap; justify-content:flex-end; }
+.shell .dossie-delete:hover { border-color:#ff6c79; color:#ffb0b7; }
+.dossie-grid { display:grid; grid-template-columns:minmax(0,1fr) minmax(320px,400px); gap:16px; align-items:start; }
+.dossie-main, .dossie-side { display:flex; flex-direction:column; gap:16px; min-width:0; }
+.dossie-detail label { display:flex; flex-direction:column; gap:6px; font-size:11px; color:var(--ui-muted); min-width:0; }
+.dossie-detail input, .dossie-detail select { width:100%; min-width:0; min-height:40px; border:1px solid #ffffff26; border-radius:7px; padding:8px 10px; color:var(--ui-text); background:#0b1017; font:inherit; font-size:13px; }
+.dossie-detail input[type=checkbox] { width:17px; min-height:17px; height:17px; padding:0; accent-color:#e32636; }
+.dossie-detail input:disabled, .dossie-detail textarea:disabled, .dossie-detail select:disabled { opacity:.7; }
+.dossie-detail .scrap-section-head button { padding:6px 10px; font-size:12px; }
+.dossie-two { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; }
+.dossie-transfer-card { display:flex; flex-direction:column; gap:12px; padding:14px; border:1px solid #e3263655; border-radius:9px; background:#e326360a; }
+.dossie-route { display:flex; align-items:baseline; gap:10px; flex-wrap:wrap; font-size:20px; }
+.dossie-route span { color:#ff6c79; }
+.dossie-route strong { margin-left:auto; font-size:22px; font-variant-numeric:tabular-nums; }
+.dossie-transfer-card dl { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:10px; margin:0; }
+.dossie-transfer-card dt { font-size:10px; letter-spacing:.4px; text-transform:uppercase; color:var(--ui-muted); }
+.dossie-transfer-card dd { margin:3px 0 0; font-size:12px; overflow-wrap:anywhere; }
+.dossie-after { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:8px; }
+.dossie-after>span { display:flex; flex-direction:column; gap:3px; padding:10px; border:1px solid var(--ui-line); border-radius:8px; font-size:11px; color:var(--ui-muted); background:#0b101780; }
+.dossie-after b { font-size:17px; color:var(--ui-text); font-variant-numeric:tabular-nums; }
+.dossie-after small { font-size:11px; }
+.dossie-after .idle { border-color:#e3263688; background:#e3263614; }
+.dossie-after .idle b { color:#ff8a94; }
+.dossie-after .ok b { color:#a7efc8; }
+.dossie-findings { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:8px; }
+.dossie-findings li { display:flex; gap:9px; align-items:flex-start; font-size:12.5px; line-height:1.55; }
+.dossie-findings li svg { flex:none; margin-top:3px; }
+.dossie-findings li.alert svg { color:#ff6c79; }
+.dossie-findings li.ok svg { color:#7fd8a8; }
+.dossie-findings li.info svg { color:#a0b6c9; }
+.dossie-table-wrap { overflow-x:auto; border:1px solid var(--ui-line); border-radius:8px; }
+.dossie-table { width:100%; border-collapse:collapse; font-size:12px; }
+/* As tabelas do portal têm regras globais (1ª coluna larga, padding grande): aqui ficam compactas. */
+.shell .dossie .dossie-table th { padding:9px 10px !important; font-size:10px !important; text-transform:uppercase; }
+.shell .dossie .dossie-table td { padding:8px 10px !important; font-size:12px !important; vertical-align:top !important; }
+.shell .dossie .dossie-table th:first-child, .shell .dossie .dossie-table td:first-child { padding-left:12px !important; min-width:0; max-width:none; white-space:nowrap !important; }
+.dossie-table td:nth-child(-n+3) { white-space:nowrap; }
+.dossie-movements td:nth-child(3) small { display:block; font-size:10.5px; }
+.dossie-table td:last-child { min-width:150px; }
+.dossie-table th { position:sticky; top:0; padding:9px 10px; text-align:left; font-size:10px; font-weight:600; letter-spacing:.4px; text-transform:uppercase; color:#b9c3d0; background:#171e28; white-space:nowrap; }
+.dossie-table td { padding:8px 10px; border-top:1px solid var(--ui-line); vertical-align:top; }
+.dossie-table td small { color:var(--ui-muted); }
+.dossie-table .num { text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap; }
+.dossie-table td.neg { color:#ff9aa3; }
+.dossie-table td.pos { color:#a7efc8; }
+.dossie-table tr.questioned td { background:#e326361a; }
+.dossie-table tr.target td { font-weight:600; }
+.dossie-note { margin:0; font-size:11px; line-height:1.55; color:var(--ui-muted); }
+.dossie-price { display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; font-size:12.5px; }
+.dossie-price small { color:var(--ui-muted); }
+.dossie-price-edit { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+.dossie-detail .dossie-price-edit input { width:210px; min-height:36px; }
+.dossie-letter pre, .dossie-response { margin:0; padding:12px; border:1px solid var(--ui-line); border-radius:8px; background:#0b1017; color:var(--ui-text); font:inherit; font-size:12px; line-height:1.6; white-space:pre-wrap; overflow-wrap:anywhere; max-height:420px; overflow:auto; }
+.dossie-subject { margin:0; font-size:12px; font-weight:600; overflow-wrap:anywhere; }
+.dossie-prints { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; }
+.dossie-prints figure { margin:0; display:flex; flex-direction:column; gap:6px; min-width:0; }
+.dossie-prints img { display:block; width:100%; height:120px; object-fit:cover; object-position:top left; border:1px solid var(--ui-line); border-radius:7px; background:#0b1017; }
+.dossie-prints figcaption { display:flex; align-items:center; justify-content:space-between; gap:6px; font-size:11px; color:var(--ui-muted); }
+.dossie-prints figcaption span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.dossie-prints figcaption button { padding:2px; }
+.dossie-log { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:8px; max-height:320px; overflow:auto; }
+.dossie-log li { display:grid; grid-template-columns:96px minmax(0,1fr); gap:10px; font-size:12px; line-height:1.5; }
+.dossie-log time { color:var(--ui-muted); font-variant-numeric:tabular-nums; }
+.dossie-log small { color:var(--ui-muted); }
+.dossie-confirm { max-width:min(640px,96vw) !important; }
+
+@media (max-width:1100px) {
+  .dossie-grid { grid-template-columns:minmax(0,1fr); }
+}
+@media (max-width:980px) {
+  .dossie-list-head { display:none; }
+  .shell .dossie-row { grid-template-columns:minmax(0,1fr) minmax(0,max-content); gap:8px 14px; }
+  .dossie-row-id { order:1; }
+  .dossie-row-value { order:2; }
+  .dossie-row-material { grid-column:1/-1; order:3; }
+  .dossie-row-transfer { grid-column:1/-1; order:4; }
+  .dossie-row-track { grid-column:1/-1; order:5; }
+  .warehouse-filters.dossie-filters { grid-template-columns:minmax(0,1fr); }
+  .scrap-dialog .dossie-candidate { grid-template-columns:22px minmax(0,1fr); }
+  .dossie-candidate-transfers, .dossie-candidate-value { grid-column:2; }
+  .dossie-candidate-value { align-items:flex-start; text-align:left; }
+}
+@media (max-width:640px) {
+  .shell .dossie { padding-inline:12px; }
+  .shell .dossie-row { padding:14px 12px; }
+  .dossie-transfer-card dl, .dossie-after { grid-template-columns:repeat(2,minmax(0,1fr)); }
+  .dossie-route strong { margin-left:0; width:100%; }
+  .dossie-two { grid-template-columns:minmax(0,1fr); }
+  .dossie-actions { justify-content:stretch; }
+  .dossie-actions button { flex:1 1 46%; justify-content:center; }
+  .scrap-dialog .dossie-target { margin-left:0; }
+  .dossie-prints { grid-template-columns:minmax(0,1fr); }
+}

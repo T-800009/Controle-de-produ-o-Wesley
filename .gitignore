@@ -10,3 +10,5 @@ backup-*.sqlite
 backup-*.sqlite-*
 *.log
 copia-*.sql
+.ui-tests-*/
+.dossie-ui-*/

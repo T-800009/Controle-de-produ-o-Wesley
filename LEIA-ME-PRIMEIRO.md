@@ -10,6 +10,43 @@ O robô roda no Windows, com o SAP aberto e logado. Ele roda a MB51 (BR02, movim
 
 ---
 
+# MB51-69 — DOSSIÊ: cobrança de transferências ao Warehouse
+
+Nova aba **DOSSIÊ** (link direto `?modulo=dossie`). Para cada material transferido sem justificativa (por exemplo, 311 do 2000 para o 7000), o portal monta o dossiê com a prova da MB51 e acompanha a cobrança até o encerramento.
+
+## Como abrir um dossiê
+
+1. Na MB51, filtre o material (centro BR02). No layout, deixe também **Data de lançamento**, **Hora de entrada** e **Nome do usuário**: é o que mostra quem transferiu e quando.
+2. Exporte com **Exportar ▸ Arquivo local… ▸ Na área de transferência**.
+3. No portal: **DOSSIÊ ▸ Novo dossiê (colar MB51)**, cole (Ctrl+V) e clique **Ler MB51**. Também aceita o arquivo exportado (xlsx, xls, csv ou txt) e linhas copiadas do Excel com a linha de títulos.
+4. A prévia mostra um dossiê por material que tem transferência para o depósito de destino (padrão 7000). Transferência que já está em outro dossiê aparece bloqueada. Clique **Abrir dossiê**.
+
+A leitura entende números do SAP nos dois formatos (1.573,49- e 1,573.49-) e datas em dia/mês, mês/dia ou ano.mês.dia. Quando a data é ambígua, a prévia deixa escolher o formato.
+
+## O que o dossiê mostra
+
+- **Transferência cobrada:** documento, itens, TMv, de → para, quantidade, data e hora, usuário e texto do documento.
+- **Depois da transferência, no destino:** consumo (261 menos 262), saída para outro depósito, sucata e o que continua parado, com valor e dias. As saídas abatem primeiro a entrada mais antiga do depósito (FIFO).
+- **Constatações automáticas:** documento sem texto, nenhum consumo, material fora das BOMs cadastradas no portal (BOM × OP e plano) e colunas que faltaram na MB51.
+- **Saldos e valor:** saldo de cada depósito pelos lançamentos colados. O botão **Conferir saldo atual na planilha** lê as abas 7000/2000/1500 e guarda o resultado no dossiê.
+- **Preço:** o digitado no dossiê; senão o valor do estoque na planilha; senão a média dos lançamentos com valor na MB51.
+- **Lançamentos da MB51:** todos os colados, com a transferência em destaque. **Colar mais lançamentos** inclui o que aconteceu depois, sem repetir documento.
+
+## Cobrança e andamento
+
+- **Copiar cobrança** (para e-mail ou Teams), **E-mail com PDF** (baixa o PDF e abre o e-mail) e **Baixar PDF**. O PDF é A4 e traz a prova, as constatações, os lançamentos, o texto da cobrança, o andamento e os prints.
+- **Marcar como cobrado** registra a 1ª cobrança. **Registrar nova cobrança** registra os reforços, e o texto passa a dizer "Reforçando a cobrança enviada em …".
+- **Resposta do Warehouse** e **Encerrar**: devolvido, justificado, estornado, baixa/ajuste ou outro, com o documento SAP. **Reabrir** volta o dossiê.
+- **Prints:** até 5 por dossiê, em PNG ou JPG de até 1,5 MB. Com o dossiê aberto, Ctrl+V cola o print.
+- **Histórico** de tudo, com data e perfil.
+- **Lista:** situação, prazo vencido destacado, valor parado em andamento, **Copiar resumo** (todos os dossiês em andamento num texto só) e **Baixar planilha**.
+
+Administrador e Analista abrem, cobram e encerram. O perfil Consulta vê, copia e baixa o PDF. Dossiê já cobrado ou com prints só o Administrador apaga. A numeração é DOS-2026-0001…, nunca reaproveitada.
+
+**Publicação:** sem Secret novo. As tabelas `dossies`, `dossie_counters` e `dossie_files` são criadas sozinhas no primeiro acesso; os scripts de cópia do D1 e de preparação do Turso já incluem as três. Confirme **MB51-69** no rodapé ou `dossies: true` em `/api/version`.
+
+---
+
 # MB51-68 — Baixa em CC direto de uma planilha Excel
 
 Na **Baixa em CC (FO.FI.C.007)**, o botão **Importar Excel** preenche todos os itens de uma vez a partir de uma planilha como a `LOSS 7000.xlsx` (exportada da MB52).

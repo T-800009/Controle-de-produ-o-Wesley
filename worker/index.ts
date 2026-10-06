@@ -6,6 +6,7 @@ import {anaNotesRoute} from './ana-notes';
 import {STOCK_MODULES,stockModule} from '../lib/stock-modules';
 import {serverFailure} from './server-errors';
 import {resolveDatabase,databaseProvider,type DatabaseEnv} from './database';
+import {DossieError,listDossies,getDossie,createDossies,updateDossie,sendDossie,answerDossie,closeDossie,reopenDossie,deleteDossie,addDossieFile,deleteDossieFile,readDossieFile,bomLookup} from './dossies';
 import {ScrapError,docKind,listScrapForms,lookupMaterials,readScrapFile,createScrapForm,importScrapForm,updateScrapDraft,uploadScrapPdf,reopenScrapForm,updateScrapPosting,markScrapSent,deleteScrapForm} from './scrap-forms';
 interface Env extends Omit<PasswordEnv,'DB'>,DatabaseEnv {GOOGLE_SERVICE_ACCOUNT_JSON?:string;REQUIRE_PASSWORD?:string;ASSETS:Fetcher;}
 function json(value:unknown,status=200){return Response.json(value,{status,headers:{'Cache-Control':'no-store','X-Content-Type-Options':'nosniff'}});}
@@ -29,7 +30,7 @@ export default {
     if(!authenticatedRole)return path.startsWith('/api/')?json({error:configured(env)?'Sessão expirada. Recarregue a página e entre novamente.':'O responsável precisa configurar a senha do portal.'},configured(env)?401:503):loginPage('',configured(env)?200:503,!configured(env));
     role=authenticatedRole;
    }
-   if(path==='/api/version')return json({version:'MB51-68',scrapForms:true,costCenterForms:true,costCenterFromSpreadsheet:true,costCenterMaxItems:300,legacyImport:true,scrapFormSignatureCheck:true,costCenterSheetRead:false,allOpsOk:true,stock7000Projects:true,planBoms:true,bomDelete:true,bomImportWithoutOpColumns:true,bomEditOps:true,stock7000SingleMb51Read:true,databaseProvider:databaseProvider(bindings),tursoSupported:true,databaseErrorCodes:true,revisionOnlyPolling:true,mb51Trace:true,scrapDocumentReconciliation:true,backgroundSourceProcessing:true,stockSources:STOCK_MODULES.map(stock=>({id:stock.id,sheet:stock.sheet})),warehouseClassFilter:true,spacedNavigation:true,operationalStatusChart:true,warehouseConsolidated:true,warehouseSharedBalance:true,opCardsWithoutSapCounts:true,responsiveLayout:true,anaNotesSingleColumn:true,anaOrderCards:true,production7000First:true,warehouse2000Comparison:true,mb51OrderCoverage:true,automaticSource:true,coois:true,cooisOptional:true,anaCheck:true,anaVisualOverview:true,anaPortugueseDescriptions:true,anaSharedNotes:true,anaAnalystRole:true,anaCooisPendingFlag:true,anaNativeSap:true,anaCostReferences:true,anaCurrencyTotals:true,anaCoverageAudit:true,opStatusAndConsumptionViews:true,anaOptionalMm60:true,anaSources:['KOB1','ZPP009','MM60','COOIS'],physicalFinalization:false,manualOpStatus:true,stockSingleRead:true,stock2000:true,stockHeaderMapping:true,opClassChart:true,mainChartNavigation:true,fullWidthLayout:true,topTableScroll:true,sapOnlyPending:false,neutralTheme:true,excelFormula:false,formulaKeyFallback:true,footerBomUpload:true,multipleBoms:true,autoBomRevision:true,scrap:true,scrapDiagnostics:true,scrapConsumption:true,scrapNetting:true,overageNotShortage:true,sharedAdminChecks:true,viewerReadOnly:true,bulkManualChecks:true,instantSharedChecks:true,refreshIntervalMinutes:0,manualRefreshOnly:true,fixedBomItems:true,performanceOptimized:true});
+   if(path==='/api/version')return json({version:'MB51-69',dossies:true,scrapForms:true,costCenterForms:true,costCenterFromSpreadsheet:true,costCenterMaxItems:300,legacyImport:true,scrapFormSignatureCheck:true,costCenterSheetRead:false,allOpsOk:true,stock7000Projects:true,planBoms:true,bomDelete:true,bomImportWithoutOpColumns:true,bomEditOps:true,stock7000SingleMb51Read:true,databaseProvider:databaseProvider(bindings),tursoSupported:true,databaseErrorCodes:true,revisionOnlyPolling:true,mb51Trace:true,scrapDocumentReconciliation:true,backgroundSourceProcessing:true,stockSources:STOCK_MODULES.map(stock=>({id:stock.id,sheet:stock.sheet})),warehouseClassFilter:true,spacedNavigation:true,operationalStatusChart:true,warehouseConsolidated:true,warehouseSharedBalance:true,opCardsWithoutSapCounts:true,responsiveLayout:true,anaNotesSingleColumn:true,anaOrderCards:true,production7000First:true,warehouse2000Comparison:true,mb51OrderCoverage:true,automaticSource:true,coois:true,cooisOptional:true,anaCheck:true,anaVisualOverview:true,anaPortugueseDescriptions:true,anaSharedNotes:true,anaAnalystRole:true,anaCooisPendingFlag:true,anaNativeSap:true,anaCostReferences:true,anaCurrencyTotals:true,anaCoverageAudit:true,opStatusAndConsumptionViews:true,anaOptionalMm60:true,anaSources:['KOB1','ZPP009','MM60','COOIS'],physicalFinalization:false,manualOpStatus:true,stockSingleRead:true,stock2000:true,stockHeaderMapping:true,opClassChart:true,mainChartNavigation:true,fullWidthLayout:true,topTableScroll:true,sapOnlyPending:false,neutralTheme:true,excelFormula:false,formulaKeyFallback:true,footerBomUpload:true,multipleBoms:true,autoBomRevision:true,scrap:true,scrapDiagnostics:true,scrapConsumption:true,scrapNetting:true,overageNotShortage:true,sharedAdminChecks:true,viewerReadOnly:true,bulkManualChecks:true,instantSharedChecks:true,refreshIntervalMinutes:0,manualRefreshOnly:true,fixedBomItems:true,performanceOptimized:true});
    if(path==='/api/session')return json({role,canMark:role==='admin',canWriteAna:role==='admin'||role==='analyst'});
    if(path==='/api/ana-notes')return await anaNotesRoute(req,env.DB,role);
    if(path==='/api/data'){
@@ -90,6 +91,47 @@ export default {
       default:return json({error:'Ação inválida.'},400);
      }
     }catch(e){if(e instanceof ScrapError)return json({error:e.message},e.status);throw e;}
+   }
+   if(path==='/api/dossies'){
+    // DOSSIÊ WAREHOUSE: todos veem; Analista e Administrador abrem, cobram e encerram.
+    if(!env.DB)return json({error:'Banco de dados não configurado.'},503);
+    const canEdit=role==='admin'||role==='analyst';
+    try{
+     if(req.method==='GET'){
+      const file=url.searchParams.get('file');
+      if(file!==null){
+       const found=await readDossieFile(env.DB,url.searchParams.get('dossie'),file);
+       return new Response(found.bytes,{headers:{'Content-Type':found.type,'Content-Disposition':`inline; filename*=UTF-8''${encodeURIComponent(found.name)}`,'Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff','X-Frame-Options':'SAMEORIGIN','Content-Security-Policy':"default-src 'none'; sandbox"}});
+      }
+      const lookup=url.searchParams.get('lookup');
+      if(lookup!==null)return json(await bomLookup(env.DB,lookup.slice(0,1000)));
+      const id=url.searchParams.get('id');
+      if(id!==null){
+       const found=/^[a-f0-9-]{36}$/i.test(id)?await getDossie(env.DB,id):null;
+       return found?json({dossie:found,canEdit,canDelete:role==='admin',role}):json({error:'Dossiê não encontrado. Ele pode ter sido apagado; atualize a lista.',code:'DOSSIE_NOT_FOUND'},404);
+      }
+      return json({dossies:await listDossies(env.DB),canEdit,canDelete:role==='admin',role});
+     }
+     if(req.method!=='POST')return json({error:'Método não permitido.'},405);
+     if(!canEdit)return json({error:'O perfil Consulta vê os dossiês. Use o acesso de Analista ou Administrador para abrir, cobrar e encerrar.'},403);
+     if(req.headers.get('origin')!==url.origin||req.headers.get('sec-fetch-site')==='cross-site')return json({error:'Origem inválida.'},403);
+     if(!req.headers.get('content-type')?.startsWith('application/json'))return json({error:'Formato inválido.'},415);
+     let body:any;
+     try{body=await bodyLimited(req);}catch(e){return json({error:e instanceof SyntaxError?'Formato inválido.':(e as Error).message},400);}
+     if(!body||typeof body!=='object')return json({error:'Formato inválido.'},400);
+     switch(body.action){
+      case 'create':return json({dossies:await createDossies(env.DB,body.items,role)});
+      case 'update':return json({dossie:await updateDossie(env.DB,body.id,body.revision,body.data,role)});
+      case 'send':return json({dossie:await sendDossie(env.DB,body.id,body.revision,role)});
+      case 'answer':return json({dossie:await answerDossie(env.DB,body.id,body.revision,{response:body.response,responseBy:body.responseBy,respondedAt:body.respondedAt},role)});
+      case 'close':return json({dossie:await closeDossie(env.DB,body.id,body.revision,{outcome:body.outcome,outcomeNote:body.outcomeNote,returnDocument:body.returnDocument},role)});
+      case 'reopen':return json({dossie:await reopenDossie(env.DB,body.id,body.revision,role)});
+      case 'delete':return json(await deleteDossie(env.DB,body.id,body.revision,role));
+      case 'file':return json({dossie:await addDossieFile(env.DB,{id:body.id,revision:body.revision,name:body.name,data:body.data},role)});
+      case 'file-delete':return json({dossie:await deleteDossieFile(env.DB,{id:body.id,revision:body.revision,fileId:body.fileId},role)});
+      default:return json({error:'Ação inválida.'},400);
+     }
+    }catch(e){if(e instanceof DossieError)return json({error:e.message},e.status);throw e;}
    }
    if(path==='/api/plan-boms'){
     // BOMs do plano (OEBOM): consulta para todos; cadastrar, mudar ônibus restantes e apagar só o administrador.
