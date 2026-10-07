@@ -15,7 +15,6 @@ import {
   pdfProblems,
   sanitizeFormData,
   sanitizeSignatures,
-  shareMessage,
   signatureProgress,
   statusFromSignatures,
   strongestClass,
@@ -153,14 +152,8 @@ test("nome do arquivo segue o padrão da equipe e a mensagem diz quem falta", ()
   assert.equal(pdfFileName(form), "Scrap Form SCRAP-2026-0007 24.09.2026 - falta assinar Marcus e Gleiber e Rosymara.pdf");
   assert.equal(pdfFileName({ ...form, status: "draft" }), "Scrap Form SCRAP-2026-0007 24.09.2026 - rascunho.pdf");
   assert.equal(pdfFileName({ ...form, signatures: [] }), "Scrap Form SCRAP-2026-0007 24.09.2026 - para assinatura.pdf");
-  const message = shareMessage(form, "https://portal.test/?modulo=baixas");
-  assert.match(message.subject, /para assinatura — Qualidade, Logística, Financeiro/);
-  assert.match(message.body, /Falta: Marcus Gallo \(Qualidade\)/);
-  assert.match(message.body, /11272431-00 — UNID DE CONTROLE ELETR EBS 5S · 1 un · R\$\s1\.054,87/);
-  assert.match(message.body, /Total: R\$\s69\.997,39/);
   const done = { ...form, status: "signed" as const, signatures: SLOTS.map((slot) => signature(slot.id, slot.defaultName, { coversWholeFile: slot.id === "finance" })) };
   assert.equal(pdfFileName(done), "Scrap Form SCRAP-2026-0007 24.09.2026 - ASSINADO.pdf");
-  assert.match(shareMessage(done).subject, /assinado/);
 });
 
 test("histórico sugere descrição, preço e VIN; classe mais alta entre BOMs", () => {

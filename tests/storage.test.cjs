@@ -403,10 +403,13 @@ console.log('Observações Ana: compartilhamento, isolamento OP/material, perfil
   const three=[sig('production','Signature3','Pessoa Producao'),sig('quality','Signature4','Pessoa Qualidade'),{...sig('logistics','Signature2','Pessoa Logistica'),coversWholeFile:true}];
   const importOne=(body,customHeaders,env)=>scrap({action:'import',name:'Formulario de SCRAP A-B 22.09.2026 falta Rosy.pdf',data:legacyData,pdf:b64(legacy),signatures:three,...body},customHeaders,env);
   assert.equal((await importOne({},viewerHeaders,viewerEnv)).status,403,'Consulta não importa');
-  assert.equal((await importOne({signatures:[]})).status,400,'PDF sem assinatura vira rascunho, não importação');
+  // MB51-71 · PDF sem assinatura também entra: fica aguardando, com o PDF guardado.
+  const unsignedPdf=fs.readFileSync(path.join(root,'tests/fixtures/legado/legado-scrap.pdf'));
+  const unsigned=(await (await importOne({signatures:[],pdf:b64(unsignedPdf),name:'Formulario de SCRAP sem assinatura.pdf'})).json()).form;
+  assert.equal(unsigned.status,'signing');assert.deepEqual(unsigned.signatures,[]);assert.equal(unsigned.files.length,1);assert.equal(unsigned.data.source,'Formulario de SCRAP sem assinatura.pdf');
+  assert.deepEqual(Buffer.from(await (await call(`/api/scrap-forms?file=${unsigned.id}&version=1`,{headers:viewerHeaders},viewerEnv)).arrayBuffer()),unsignedPdf);
   assert.equal((await importOne({pdf:b64(Buffer.from('não é pdf'))})).status,400);
   assert.equal((await importOne({pdf:b64(Buffer.concat([legacy,Buffer.alloc(1_600_000,32)]))})).status,413,'Acima de 1,5 MB não cabe');
-  assert.equal((await importOne({signatures:[...three,sig('finance','Assinatura_Financeiro','Pessoa Financeiro')]})).status,400,'Mais assinaturas conferidas do que /ByteRange no arquivo');
   let imported=(await (await importOne({})).json()).form;
   assert.match(imported.number,new RegExp(`^SCRAP-${year}-\\d{4}$`));
   assert.equal(imported.status,'signing','Falta o Financeiro (item classe B)');

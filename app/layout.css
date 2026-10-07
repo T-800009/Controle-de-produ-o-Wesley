@@ -765,3 +765,10 @@ fieldset.cc-remarks.scrap-fieldset{display:grid;grid-template-columns:minmax(0,2
 .cc-edit-table tr.cc-row-in td:nth-child(7) input{border-color:#e0b75c;color:#f2cf7f}
 .scrap-dialog .cc-edit-table .cc-row-remove{padding:5px 7px}
 @media (max-width:700px){.cc-bulk{grid-template-columns:minmax(0,1fr)}}
+/* MB51-71 · Aba aberta com versão antiga */
+.update-banner{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);z-index:80;display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:center;max-width:calc(100vw - 32px);padding:10px 14px;border-radius:10px;background:#e0b75c;color:#1a1408;font-size:13px;font-weight:600;box-shadow:0 10px 30px #0008}
+.update-banner button{display:inline-flex;align-items:center;gap:6px;border-radius:6px;padding:5px 10px;border:1px solid #1a140855;background:#fff7e3;color:#1a1408;font-weight:700;cursor:pointer}
+/* MB51-71 · E-mail formal */
+.scrap-send .scrap-send-row{grid-template-columns:minmax(220px,2fr) minmax(180px,1fr)}
+.scrap-email-preview{display:block;width:100%;height:440px;margin:8px 0 0;border-radius:8px;background:#fff;border:1px solid var(--ui-line)}
+@media (max-width:860px){.scrap-send .scrap-send-row{grid-template-columns:1fr}}

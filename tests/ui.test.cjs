@@ -1316,7 +1316,8 @@ test('SCRAP FORM: anexar o PDF devolvido confere as assinaturas, guarda a versã
  assert.equal(upload.kind,'signed');assert.equal(upload.signatures.length,4);assert.ok(upload.signatures.every(entry=>entry.check==='valid'));
  assert.equal(document.querySelectorAll('.scrap-slot.signed').length,4);
  assert.match(document.querySelector('.scrap-message').textContent,/Todos os quadros assinados/);
- assert.match(document.querySelector('.scrap-send-preview').textContent,/Scrap Form SCRAP-2026-0001 assinado/);
+ assert.match(document.querySelector('.scrap-send-preview').textContent,/Scrap Form nº SCRAP-2026-0001 assinado \(24\/09\/2026\)/);
+ assert.match(document.querySelector('.scrap-email-preview').getAttribute('srcdoc'),/Encaminho, em anexo, o <b>Formulário de Scrap A-B nº SCRAP-2026-0001<\/b>, de <b>24\/09\/2026<\/b>, devidamente assinado por todos os responsáveis/);
  assert.match(ui.container.querySelector('.scrap-row').textContent,/Assinado.*Ainda não enviado/);
  await closeDialog(ui);
  ui.assertHealthy();
@@ -1422,7 +1423,27 @@ test('BAIXA EM CC: o PDF devolvido só fica assinado com Solicitante, Gestor, SC
  assert.equal(uploads.length,2);assert.ok(uploads.every(post=>post.doc==='cc'));
  assert.deepEqual(uploads[1].signatures.map(entry=>entry.slot),['requester','manager','scm','finance']);
  assert.equal(document.querySelectorAll('.cc-dialog .scrap-slot.signed').length,4);
- assert.match(document.querySelector('.scrap-send-preview').textContent,/FO\.FI\.C\.007 CC-2026-0001 \(Setembro\/2026\) assinado/);
+ assert.match(document.querySelector('.scrap-send-preview').textContent,/FO\.FI\.C\.007 nº CC-2026-0001 assinado – Ajuste de inventário de Setembro\/2026/);
+ // E-mail pronto: rascunho .eml com o texto formal e o PDF assinado anexado.
+ const saved=[];t.mock.method(URL,'createObjectURL',blob=>{saved.push(blob);return 'blob:teste';});t.mock.method(URL,'revokeObjectURL',()=>{});
+ const recipient=[...document.querySelectorAll('.cc-dialog .scrap-send label')].find(label=>/Para/.test(label.textContent)).querySelector('input');
+ await typeInto(recipient,'financeiro@empresa.test');
+ const signer=[...document.querySelectorAll('.cc-dialog .scrap-send label')].find(label=>/Assinar o e-mail como/.test(label.textContent)).querySelector('input');
+ assert.equal(signer.value,'Pessoa Solicitante','Assina como o Solicitante');
+ await pressIn(ui,'.cc-dialog .scrap-send button','E-mail pronto com PDF');
+ await ui.settle(()=>saved.some(blob=>blob.type==='message/rfc822'));
+ const eml=Buffer.from(await saved.find(blob=>blob.type==='message/rfc822').arrayBuffer()).toString('latin1');
+ assert.match(eml,/^X-Unsent: 1\r\nTo: financeiro@empresa\.test\r\nSubject: =\?UTF-8\?B\?/);
+ const parts=[...eml.matchAll(/Content-Type: (text\/plain|text\/html|application\/pdf)[^\r]*\r\n(?:[^\r]+\r\n)*\r\n([A-Za-z0-9+\/=\r\n]+?)\r\n(?:\r\n)?--/g)].map(match=>[match[1],Buffer.from(match[2].replace(/\r\n/g,''),'base64')]);
+ const text=parts.find(([type])=>type==='text/plain')[1].toString('utf8'),html=parts.find(([type])=>type==='text/html')[1].toString('utf8');
+ assert.match(text,/^Prezados, (bom dia|boa tarde|boa noite)\.\n\nEncaminho, em anexo, o formulário FO\.FI\.C\.007 – Inventory Adjustment nº CC-2026-0001/);
+ assert.match(text,/Solicito, por gentileza, a efetivação do ajuste no SAP/);
+ assert.match(text,/Atenciosamente,\nPessoa Solicitante$/);
+ assert.match(html,/<b>FO\.FI\.C\.007 – Inventory Adjustment nº CC-2026-0001<\/b>/);
+ assert.deepEqual(parts.find(([type])=>type==='application/pdf')[1],Buffer.from(ccFixture('assinado-completo.pdf')),'PDF assinado anexado');
+ assert.match(eml,/filename="FO\.FI\.C\.007 CC-2026-0001 Setembro-2026 - ASSINADO\.pdf"/);
+ assert.match(document.querySelector('.cc-dialog .scrap-send').textContent,/E-mail pronto baixado/);
+ await ui.settle(()=>server.state.posts.some(post=>post.action==='sent'));
  const sap=[...document.querySelectorAll('.cc-dialog .cc-posting label')].find(label=>/Documento SAP/.test(label.textContent)).querySelector('input');
  await typeInto(sap,'4900012345');
  await pressIn(ui,'.cc-dialog .cc-posting button','Salvar');
@@ -1430,6 +1451,32 @@ test('BAIXA EM CC: o PDF devolvido só fica assinado com Solicitante, Gestor, SC
  const posting=server.state.posts.find(post=>post.action==='posting');
  assert.equal(posting.doc,'cc');assert.equal(posting.sapDocument,'4900012345');
  await ui.settle(()=>/Doc\. SAP 4900012345/.test(ui.container.querySelector('.cc-row').textContent));
+ await closeDialog(ui);
+ ui.assertHealthy();
+});
+
+// MB51-71 · Aba aberta antes de uma atualização: nunca gera PDF com o código antigo.
+const draftCc={id:'7a2c1b4d-0000-4000-8000-000000000003',number:'CC-2026-0003',status:'draft',data:ccData,signatures:[],fileVersion:0,files:[],revision:1,createdAt:'2026-10-07T09:00:00Z',updatedAt:'2026-10-07T09:00:00Z',createdBy:'admin',signedAt:null,sentAt:null};
+test('BAIXA EM CC: com versão nova publicada, Gerar PDF recarrega a página em vez de usar o código antigo',async t=>{
+ const server=scrapServer({cc:[draftCc]});
+ const ui=await mount(t,{url:'https://portal.test/?modulo=baixas&cc='+draftCc.id,respond:(url,init)=>url.pathname==='/api/version'?Response.json({version:'MB51-00'}):server.respond(url,init)});
+ await ui.settle(()=>[...document.querySelectorAll('.cc-dialog button')].some(button=>/Gerar PDF para assinatura/.test(button.textContent)));
+ await pressIn(ui,'.cc-dialog button','Gerar PDF para assinatura');
+ await ui.settle(()=>/recarregando para gerar o PDF na versão nova/.test(document.querySelector('.cc-dialog .scrap-message')?.textContent||''));
+ assert.equal(server.state.posts.filter(post=>post.action==='upload').length,0,'Nenhum PDF gerado pela versão antiga');
+ // A faixa avisa quando a aba volta a ficar em foco.
+ await act(async()=>{window.dispatchEvent(new window.Event('focus'));});
+ await ui.settle(()=>document.querySelector('.update-banner'));
+ assert.match(document.querySelector('.update-banner').textContent,/O portal foi atualizado.*Atualizar agora/);
+ await closeDialog(ui);
+});
+test('BAIXA EM CC: depois de recarregar (gerar=1) o PDF é gerado sozinho, uma vez',async t=>{
+ const server=scrapServer({cc:[draftCc]});
+ const ui=await mount(t,{url:'https://portal.test/?modulo=baixas&cc='+draftCc.id+'&gerar=1',respond:server.respond});
+ await ui.settle(()=>server.state.posts.some(post=>post.action==='upload'&&post.kind==='generated'));
+ assert.equal(new URL(location.href).searchParams.get('gerar'),null,'O endereço perde o gerar=1');
+ await ui.settle(()=>/CC-2026-0003 · Aguardando assinatura/.test(document.querySelector('.cc-dialog h2')?.textContent||''));
+ assert.equal(server.state.posts.filter(post=>post.action==='upload').length,1);
  await closeDialog(ui);
  ui.assertHealthy();
 });
@@ -1562,11 +1609,11 @@ async function attachMany(input,files){
  Object.defineProperty(input,'files',{configurable:true,value:files.map(([bytes,name])=>new File([bytes],name,{type:'application/pdf',lastModified:1}))});
  await act(async()=>{input.dispatchEvent(new window.Event('change',{bubbles:true}));});
 }
-test('IMPORTAR PDFs existentes: lê itens e assinaturas, guarda o PDF original e o que não tem assinatura vira rascunho',async t=>{
+test('ADICIONAR PDFs: lê itens e assinaturas e guarda qualquer PDF, até sem assinatura ou emitido pelo portal',async t=>{
  const server=scrapServer();
  const ui=await mount(t,{url:'https://portal.test/?modulo=baixas',respond:server.respond});
  await ui.settle(()=>ui.container.querySelector('.scrap-forms .empty'));
- await ui.click('.scrap-forms button','Importar PDFs existentes');
+ await ui.click('.scrap-forms button','Adicionar PDFs');
  await ui.settle(()=>document.querySelector('.import-dialog input[aria-label="PDFs para importar"]'));
  await attachMany(document.querySelector('.import-dialog input[aria-label="PDFs para importar"]'),[
   [legacyFixture('legado-scrap-assinado.pdf'),'Formulario de SCRAP A-B 22.09.2026 Falta assinar Rosy.pdf'],
@@ -1581,35 +1628,40 @@ test('IMPORTAR PDFs existentes: lê itens e assinaturas, guarda o PDF original e
  assert.match(signed,/22\/09\/2026 · 2 item\(s\) · R\$\s3\.467,97 · 11272431-00 UNID DE CONTROLE ELETR EBS 5S/);
  assert.match(signed,/Produção: Pessoa Producao ✓/);assert.match(signed,/Qualidade: Pessoa Qualidade ✓/);assert.match(signed,/Logística: Pessoa Logistica ✓/);
  assert.match(signed,/Entra aguardando: falta Financeiro/);
- assert.match(row('sem assinatura').textContent,/Sem assinatura: entra como rascunho/);
+ assert.match(row('sem assinatura').textContent,/Sem assinatura: entra aguardando assinatura, com o PDF guardado/);
  const cc=row('Ajuste Inventario').textContent;
  assert.match(cc,/Agosto\/2026 · 2 item\(s\)/);assert.match(cc,/Solicitante: Pessoa Solicitante ✓/);assert.match(cc,/falta SCM, Financeiro/);
  assert.equal(row('Ajuste Inventario').querySelector('select').value,'cc');
- assert.match(row('do portal').textContent,/É um PDF emitido pelo portal \(CC-2026-0001\)/);
- assert.equal(row('do portal').querySelector('input[type="checkbox"]').disabled,true);
+ assert.match(row('do portal').textContent,/PDF emitido pelo portal \(CC-2026-0001\), mas esse número não está na lista: entra como formulário novo/);
+ assert.equal(row('do portal').querySelector('input[type="checkbox"]').checked,true,'PDF do portal também entra');
+ assert.equal(document.querySelector('.import-list .scrap-review-block'),null,'Nenhum erro');
  // Regravado depois de assinado: quem assinou conta, sem aviso.
  const rewritten=row('regravado').textContent;
  assert.match(rewritten,/Produção: Pessoa Producao ✓/);assert.match(rewritten,/Entra aguardando: falta Financeiro/);
  assert.doesNotMatch(document.querySelector('.import-list').textContent,/regravado depois|não confere|alterações depois|autoassinado/);
  await act(async()=>{row('regravado').querySelector('input[type="checkbox"]').click();});
  await ui.settle(()=>!row('regravado').querySelector('input[type="checkbox"]').checked);
- await pressIn(ui,'.import-dialog button','Importar 3 formulário(s)');
- await ui.settle(()=>document.querySelectorAll('.import-row.done').length===3);
+ await pressIn(ui,'.import-dialog button','Adicionar 4 PDF(s)');
+ await ui.settle(()=>document.querySelectorAll('.import-row.done').length===4);
  const imports=server.state.posts.filter(post=>post.action==='import');
- assert.equal(imports.length,2);
+ assert.equal(imports.length,4,'Todos entram pela importação, com o PDF guardado');
+ assert.equal(server.state.posts.filter(post=>post.action==='create').length,0,'Nada vira rascunho sem PDF');
  assert.equal(imports[0].doc,'cc','Em ordem de data: agosto antes de setembro');
- const scrapImport=imports.find(post=>!post.doc);
+ const scrapImport=imports.find(post=>post.name==='Formulario de SCRAP A-B 22.09.2026 Falta assinar Rosy.pdf');
  assert.equal(scrapImport.name,'Formulario de SCRAP A-B 22.09.2026 Falta assinar Rosy.pdf');
  assert.deepEqual(scrapImport.signatures.map(entry=>[entry.slot,entry.check]),[['production','imported'],['quality','imported'],['logistics','imported']]);
  assert.equal(scrapImport.data.items.length,2);assert.equal(scrapImport.data.items[0].unitPrice,1233.89);assert.equal(scrapImport.data.items[1].cause,'C');
  assert.deepEqual(Buffer.from(scrapImport.pdf,'base64'),Buffer.from(legacyFixture('legado-scrap-assinado.pdf')),'PDF original, sem alteração');
- const draft=server.state.posts.find(post=>post.action==='create');
- assert.equal(draft.data.items.length,2);assert.equal(draft.data.source,undefined);
- assert.match(document.querySelector('.import-dialog [role="status"]').textContent,/3 formulário\(s\) cadastrado\(s\)/);
+ const unsigned=imports.find(post=>/sem assinatura/.test(post.name));
+ assert.deepEqual(unsigned.signatures,[]);assert.equal(unsigned.data.items.length,2);
+ assert.deepEqual(Buffer.from(unsigned.pdf,'base64'),Buffer.from(legacyFixture('legado-scrap.pdf')),'PDF sem assinatura também fica guardado');
+ const portal=imports.find(post=>post.name==='FO.FI.C.007 do portal.pdf');
+ assert.equal(portal.doc,'cc');assert.equal(portal.data.items[0].material,'11272431-00');assert.equal(portal.data.approvers.requester,'Pessoa Solicitante');
+ assert.match(document.querySelector('.import-dialog [role="status"]').textContent,/4 PDF\(s\) guardado\(s\)/);
  await pressIn(ui,'.import-dialog .scrap-footer button','Fechar');
  await ui.settle(()=>!document.querySelector('.import-dialog')&&ui.container.querySelectorAll('.scrap-row').length===2);
  await wait(20);
- const imported=[...ui.container.querySelectorAll('.scrap-row')].find(entry=>/Importado/.test(entry.textContent));
+ const imported=[...ui.container.querySelectorAll('.scrap-row')].find(entry=>/Importado/.test(entry.textContent)&&/Falta Financeiro/.test(entry.textContent));
  assert.match(imported.textContent,/Falta Financeiro/);
  // Corrigir a transcrição sem mexer nas assinaturas.
  await act(async()=>{imported.dispatchEvent(new window.MouseEvent('click',{bubbles:true,button:0}));});
@@ -1631,6 +1683,52 @@ test('IMPORTAR PDFs existentes: lê itens e assinaturas, guarda o PDF original e
  await ui.settle(()=>document.querySelector('.scrap-dialog .scrap-send.signed'));
  assert.equal(document.querySelectorAll('.scrap-dialog .scrap-slot.signed').length,4);
  await closeDialog(ui);
+ ui.assertHealthy();
+});
+
+// MB51-71 · Baixa em CC: qualquer PDF entra — versão nova do formulário do portal, FO.FI.C.007 antigo de 2 páginas, PDF sem texto.
+test('ADICIONAR PDFs na Baixa em CC: versão nova do próprio formulário, PDF longo de outro número e PDF sem texto',async t=>{
+ const generated=ccFixture('gerado.pdf');
+ const form={id:'7a2c1b4d-0000-4000-8000-000000000001',number:'CC-2026-0001',status:'signing',data:ccData,signatures:[],fileVersion:1,
+  files:[{version:1,kind:'generated',name:'FO.FI.C.007 CC-2026-0001 Setembro-2026 - para assinatura.pdf',size:generated.length,sha256:sha256(generated),createdAt:'2026-09-24T12:00:00Z',createdBy:'admin',bytes:generated}],revision:2,createdAt:'2026-09-24T12:00:00Z',updatedAt:'2026-09-24T12:00:00Z',createdBy:'admin',signedAt:null,sentAt:null};
+ const server=scrapServer({cc:[form]});
+ const ui=await mount(t,{url:'https://portal.test/?modulo=baixas&doc=cc',respond:server.respond});
+ await ui.settle(()=>ui.container.querySelector('.cc-row'));
+ await ui.click('.scrap-forms button','Adicionar PDFs');
+ await ui.settle(()=>document.querySelector('.import-dialog input[aria-label="PDFs para importar"]'));
+ const {PDFDocument}=require('pdf-lib');const blank=await PDFDocument.create();blank.addPage([842,595]);
+ await attachMany(document.querySelector('.import-dialog input[aria-label="PDFs para importar"]'),[
+  [ccFixture('assinado-completo.pdf'),'FO.FI.C.007 CC-2026-0001 ASSINADO.pdf'],
+  [generated,'FO.FI.C.007 CC-2026-0001 para assinatura.pdf'],
+  [new Uint8Array(fs.readFileSync(path.join(__dirname,'fixtures','cc','portal-antigo-57.pdf'))),'FO.FI.C.007 CC-2026-0005 Outubro-2026 - para assinatura.pdf'],
+  [await blank.save(),'baixa escaneada.pdf'],
+ ]);
+ await ui.settle(()=>document.querySelectorAll('.import-row').length===4&&!/Lendo/.test(document.querySelector('.import-dialog .scrap-check-file').textContent));
+ const row=name=>[...document.querySelectorAll('.import-row')].find(entry=>entry.textContent.includes(name));
+ assert.match(row('ASSINADO').textContent,/Entra como versão nova do CC-2026-0001 · fica Assinado/);
+ assert.match(row('para assinatura.pdf').textContent,/Já está guardado no portal \(CC-2026-0001\)/);
+ assert.equal(row('para assinatura.pdf').querySelector('input[type="checkbox"]').disabled,true);
+ const long=row('CC-2026-0005').textContent;
+ assert.match(long,/Outubro\/2026 · 57 item\(s\) · -R\$\s948\.348,81/,'As duas páginas do PDF antigo');
+ assert.match(long,/Sem assinatura: entra aguardando assinatura/);
+ assert.match(row('escaneada').textContent,/PDF sem texto/);
+ assert.equal(row('escaneada').querySelector('select').value,'cc','Sem texto: vale a aba aberta');
+ assert.equal(document.querySelector('.import-list .scrap-review-block'),null,'Nenhum erro');
+ await pressIn(ui,'.import-dialog button','Adicionar 3 PDF(s)');
+ await ui.settle(()=>document.querySelectorAll('.import-row.done').length===3);
+ const upload=server.state.posts.find(post=>post.action==='upload');
+ assert.equal(upload.id,form.id);assert.equal(upload.doc,'cc');assert.equal(upload.kind,'signed');
+ assert.deepEqual(upload.signatures.map(entry=>[entry.slot,entry.check]),[['requester','valid'],['manager','valid'],['scm','valid'],['finance','valid']]);
+ const imports=server.state.posts.filter(post=>post.action==='import');
+ assert.equal(imports.length,2);assert.ok(imports.every(post=>post.doc==='cc'));
+ const old=imports.find(post=>/CC-2026-0005/.test(post.name));
+ assert.equal(old.data.items.length,57);assert.equal(old.data.reason,'LOSS');assert.equal(old.data.approvers.finance,'Pessoa Financeiro');
+ assert.equal(old.data.items[4].description,'CONJUNTO DE TESTE COM DESCRICAO MUITO LONGA PARA QUEBRAR EM DUAS LINHAS NA CELULA DO FORMULARIO 5','Descrição em duas linhas vem inteira');
+ const scanned=imports.find(post=>post.name==='baixa escaneada.pdf');
+ assert.deepEqual(scanned.data.items,[]);assert.deepEqual(scanned.signatures,[]);
+ await pressIn(ui,'.import-dialog .scrap-footer button','Fechar');
+ await ui.settle(()=>!document.querySelector('.import-dialog')&&ui.container.querySelectorAll('.cc-row').length===3);
+ assert.match([...ui.container.querySelectorAll('.cc-row')].find(entry=>/CC-2026-0001/.test(entry.textContent)).textContent,/Assinad/);
  ui.assertHealthy();
 });
 

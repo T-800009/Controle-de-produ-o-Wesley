@@ -11,7 +11,6 @@ import {
   ccItemTotal,
   ccLayout,
   ccProblems,
-  ccShareMessage,
   ccTotals,
   emptyCcForm,
   emptyCcItem,
@@ -172,19 +171,11 @@ test("assinaturas: só os quatro quadros do FO.FI.C.007 contam; quadro do Scrap 
   assert.equal(signatureProgress(scrapData, all, "scrap").complete, false);
 });
 
-test("nome do arquivo, mensagem e resumo da lista", () => {
+test("nome do arquivo e resumo da lista", () => {
   assert.equal(ccFileName(ccForm({ status: "draft" })), "FO.FI.C.007 CC-2026-0001 Setembro-2026 - rascunho.pdf");
   assert.equal(ccFileName(ccForm()), "FO.FI.C.007 CC-2026-0001 Setembro-2026 - para assinatura.pdf");
   assert.equal(ccFileName(ccForm({ signatures: all.slice(0, 2) })), "FO.FI.C.007 CC-2026-0001 Setembro-2026 - falta assinar Pessoa e Pessoa.pdf");
   assert.equal(ccFileName(ccForm({ status: "signed", signatures: all })), "FO.FI.C.007 CC-2026-0001 Setembro-2026 - ASSINADO.pdf");
-  const open = ccShareMessage(ccForm({ signatures: all.slice(0, 3) }), "https://portal.test/?modulo=baixas&cc=x");
-  assert.equal(open.subject, "FO.FI.C.007 CC-2026-0001 (Setembro/2026) para assinatura — Financeiro");
-  assert.match(open.body, /Falta: Pessoa Financeiro \(Financeiro\)/);
-  assert.match(open.body, /11272431-00 — UNID DE CONTROLE ELETR EBS 5S · -1 · -R\$\s1\.054,87 · CC BR000411/);
-  assert.match(open.body, /Origem: SCRAP-2026-0001\./);
-  assert.match(open.body, /https:\/\/portal\.test\/\?modulo=baixas&cc=x$/);
-  const done = ccShareMessage(ccForm({ status: "signed", signatures: all }));
-  assert.match(done.subject, /assinado — -R\$\s1\.054,87$/);
   const summary = summarizeCcForms([ccForm(), ccForm({ status: "signed" }), ccForm({ status: "draft" })]);
   assert.deepEqual(summary, { open: 1, signed: 1, drafts: 1, valueOpen: -1054.87 });
 });

@@ -15,6 +15,7 @@ import {
   type PDFPage,
 } from "pdf-lib";
 import { checkCmsSignature, sha256Hex } from "./pdf-signature.ts";
+import { bytesToBase64 } from "./base64.ts";
 import { SCRAP_FORM_LOGO_JPEG } from "./scrap-logo.ts";
 import { CC_SINGLE_PAGE_ROWS, CC_TITLE, MAX_CC_ITEMS, ccItemTotal, ccLayout, ccTotals, periodLabel, type CcFormData } from "./cc-form.ts";
 import {
@@ -49,6 +50,8 @@ export const APPROVAL = { label: 70, slot: (CONTENT_WIDTH - 70) / 4 };
 /** Marca gravada no PDF para reconhecer o formulário ao receber de volta. */
 export const FORM_KEY = "WBYDScrapForm";
 const BOXES_KEY = "WBYDSignatureBoxes";
+/** Dados do formulário (JSON em base64) para o PDF voltar ao portal exatamente como foi emitido. */
+export const DATA_KEY = "WBYDData";
 
 type Column = { key: string; label: string[]; width: number; align: "left" | "center" | "right" };
 const COLUMNS: Column[] = [
@@ -309,7 +312,7 @@ export async function buildScrapPdf({ number, data, generatedAt = new Date() }: 
   page.drawText(footer, { x: left, y: PAGE.margin - 14, size: 6.2, font: regular, color: MUTED });
   page.drawText("Página 1/1", { x: left + CONTENT_WIDTH - regular.widthOfTextAtSize("Página 1/1", 6.2), y: PAGE.margin - 14, size: 6.2, font: regular, color: MUTED });
 
-  return finish(doc, { title: `Scrap Form ${number}`, subject: "Formulário de SCRAP A-B", keyword: "Scrap Form", number, generatedAt, boxes });
+  return finish(doc, { title: `Scrap Form ${number}`, subject: "Formulário de SCRAP A-B", keyword: "Scrap Form", number, generatedAt, boxes, kind: "scrap", data });
 }
 
 /** Campo de assinatura digital vazio, com o nome do quadro. Devolve o quadro para o Info do PDF. */
@@ -329,7 +332,7 @@ function signatureField(doc: PDFDocument, page: PDFPage, slot: { id: SlotId; fie
   doc.getForm().acroForm.addField(ref);
   return `${slot.id}:${rect.map((value) => value.toFixed(1)).join(",")}`;
 }
-function finish(doc: PDFDocument, meta: { title: string; subject: string; keyword: string; number: string; generatedAt: Date; boxes: string[] }) {
+function finish(doc: PDFDocument, meta: { title: string; subject: string; keyword: string; number: string; generatedAt: Date; boxes: string[]; kind: DocKind; data: unknown }) {
   doc.setTitle(meta.title);
   doc.setSubject(meta.subject);
   doc.setAuthor("Controle de Produção WBYD");
@@ -342,6 +345,7 @@ function finish(doc: PDFDocument, meta: { title: string; subject: string; keywor
   info.set(PDFName.of(FORM_KEY), PDFString.of(meta.number));
   // Quadros de assinatura ("@n" = página n+1): um campo desenhado à parte só vale se estiver dentro de um deles.
   info.set(PDFName.of(BOXES_KEY), PDFString.of(meta.boxes.join(";")));
+  info.set(PDFName.of(DATA_KEY), PDFString.of(bytesToBase64(new TextEncoder().encode(JSON.stringify({ v: 1, kind: meta.kind, number: meta.number, data: meta.data })))));
   return doc.save({ useObjectStreams: false, updateFieldAppearances: false });
 }
 
@@ -562,7 +566,7 @@ export async function buildCcPdf({ number, data, generatedAt = new Date() }: { n
       footer(page, CC_PAGE.margin - 8, layout.pages, true);
     }
   }
-  return finish(doc, { title: `${CC_TITLE} ${number}`, subject: "Baixa / ajuste de estoque em centro de custo", keyword: "FO.FI.C.007", number, generatedAt, boxes });
+  return finish(doc, { title: `${CC_TITLE} ${number}`, subject: "Baixa / ajuste de estoque em centro de custo", keyword: "FO.FI.C.007", number, generatedAt, boxes, kind: "cc", data });
 }
 
 /* ------------------------------------------------------------------------ */
@@ -624,9 +628,9 @@ type PageBox = { x: number; y: number; width: number; height: number };
  * SCM, Financeiro). Campo com nome do portal (Assinatura_…) fica no próprio
  * quadro e serve de referência; campo fora da página ou fora da linha não vale.
  */
-export function legacySlots(placed: Placed[], box: PageBox, kind?: DocKind): (SlotId | null)[] {
+export function legacySlots(placed: Placed[], box: PageBox, kind?: DocKind, page = 0): (SlotId | null)[] {
   const inPage = (entry: Placed) =>
-    !!entry.center && entry.center.page === 0 && entry.center.x >= box.x && entry.center.x <= box.x + box.width && entry.center.y >= box.y && entry.center.y <= box.y + box.height;
+    !!entry.center && entry.center.page === page && entry.center.x >= box.x && entry.center.x <= box.x + box.width && entry.center.y >= box.y && entry.center.y <= box.y + box.height;
   const visible = placed.filter(inPage);
   let resolved = kind;
   if (!resolved) {
@@ -759,8 +763,11 @@ export async function readScrapPdf(bytes: Uint8Array, { maxBytes = MAX_PDF_BYTES
     return { entry, center, slot: slotFromFieldName(entry.name) || (center ? slotFromPosition(center, boxes) : null) };
   });
   if (legacy && !boxes.length) {
-    const page = doc.getPage(0).getMediaBox();
-    legacySlots(entries, page, kind).forEach((slot, index) => (entries[index].slot = slot));
+    // Página dos campos sem nome do portal (a das assinaturas; no FO.FI.C.007 longo, a última).
+    const count = new Map<number, number>();
+    for (const entry of entries) if (!entry.slot && entry.center) count.set(entry.center.page, (count.get(entry.center.page) || 0) + 1);
+    const fieldsPage = Math.min(Math.max([...count.entries()].sort((a, b) => b[1] - a[1] || b[0] - a[0])[0]?.[0] ?? 0, 0), doc.getPageCount() - 1);
+    legacySlots(entries, doc.getPage(fieldsPage).getMediaBox(), kind, fieldsPage).forEach((slot, index) => (entries[index].slot = slot));
   }
   for (const { entry, slot } of entries) {
     const value = entry.dict.lookup(PDFName.of("V"));

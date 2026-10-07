@@ -194,25 +194,6 @@ export function ccFileName(form: Pick<CcForm, "number" | "data" | "status" | "si
   return `${base} - falta assinar ${missing.join(" e ")}.pdf`.replace(/[\\/:*?"<>|]+/g, "-");
 }
 
-export function ccShareMessage(form: Pick<CcForm, "number" | "data" | "status" | "signatures">, link = "") {
-  const progress = signatureProgress(form.data, form.signatures, "cc");
-  const totals = ccTotals(form.data);
-  const name = `FO.FI.C.007 ${form.number} (${periodLabel(form.data.period)})`;
-  const lines = form.data.items.map(
-    (item) => `• ${item.material} — ${item.description} · ${item.quantity ?? "?"} · ${brMoney(ccItemTotal(item)) || "sem valor"} · CC ${item.costCenter}`,
-  );
-  const subject = progress.complete
-    ? `${name} assinado — ${brMoney(totals.cost)}`
-    : `${name} para assinatura — ${progress.missing.map((entry) => entry.slot.label).join(", ")}`;
-  const intro = progress.complete
-    ? `Segue o ${name} com todas as assinaturas.`
-    : `Segue o ${name} para assinatura digital. Falta: ${progress.missing.map((entry) => `${entry.expected} (${entry.slot.label})`).join(", ")}.`;
-  const how = progress.complete ? [] : ["", "Abra o PDF no Adobe, clique no campo do seu quadro e assine com o seu certificado. Depois devolva o PDF assinado."];
-  const origin = form.data.scrapForms.length ? ["", `Origem: ${form.data.scrapForms.join(", ")}.`] : [];
-  const body = [intro, "", ...lines, `Total: ${brMoney(totals.cost)}`, ...origin, ...how, ...(link ? ["", link] : [])].join("\n");
-  return { subject, body };
-}
-
 /**
  * Itens e textos a partir de Scrap Forms assinados: cada peça sucateada sai do
  * estoque (quantidade negativa) pelo centro de custo escolhido.
@@ -305,7 +286,7 @@ export function sheetNumber(value: unknown): number | null {
 }
 
 /** Custo unitário com o mínimo de casas que ainda dá o total da planilha (centavo a centavo). */
-function unitFromTotal(total: number, quantity: number) {
+export function unitFromTotal(total: number, quantity: number) {
   const raw = Math.abs(total) / Math.abs(quantity);
   for (let digits = 2; digits <= 8; digits++) {
     const unit = Math.round(raw * 10 ** digits) / 10 ** digits;

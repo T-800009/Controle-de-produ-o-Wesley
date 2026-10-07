@@ -116,10 +116,9 @@ export async function updateScrapDraft(db:PortalDatabase,id:unknown,revision:unk
  return (await getScrapForm(db,form.id,kind))!;
 }
 /**
- * Formulário que já existia (Excel → PDF assinado no Adobe): ganha número do
- * portal e o PDF original fica guardado como versão 1. A situação sai das
- * assinaturas conferidas no navegador, com a mesma regra do upload.
- * PDF sem nenhuma assinatura não é importado aqui: vira rascunho (create).
+ * Qualquer PDF de Scrap Form ou FO.FI.C.007 (do Excel, de outro lugar, com ou
+ * sem assinatura): ganha número do portal e o PDF fica guardado como versão 1.
+ * Quem assinou no arquivo conta como assinado; sem assinatura, fica aguardando.
  */
 export async function importScrapForm(db:PortalDatabase,payload:{data?:unknown;name?:unknown;pdf?:unknown;signatures?:unknown},role:PortalRole,kind:DocKind='scrap',now=new Date()){
  await scrapSchema(db);
@@ -130,8 +129,6 @@ export async function importScrapForm(db:PortalDatabase,payload:{data?:unknown;n
  if(bytes.length>MAX_PDF_BYTES)throw new ScrapError('O PDF passa de 1,5 MB e não cabe no portal.',413);
  if(!countBytes(bytes.subarray(0,1024),'%PDF-'))throw new ScrapError('O arquivo enviado não é um PDF.');
  const read=valid(()=>sanitizeSignatures(payload.signatures));
- if(!read.length)throw new ScrapError('Este PDF não tem nenhuma assinatura digital: cadastre como rascunho.');
- if(countBytes(bytes,'/ByteRange')<read.length)throw new ScrapError('O arquivo não tem as assinaturas informadas.');
  // Quem assinou o PDF antigo conta como assinado, mesmo que o arquivo tenha sido regravado depois.
  const signatures=acceptOriginal(read);
  const name=safeName(payload.name,'formulario-importado.pdf');

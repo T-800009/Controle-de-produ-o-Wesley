@@ -386,26 +386,6 @@ export function pdfFileName(form: Pick<ScrapForm, "number" | "data" | "status" |
   return `${base} - falta assinar ${missing.join(" e ")}.pdf`.replace(/[\\/:*?"<>|]+/g, "-");
 }
 
-/** Texto para e-mail / Teams. */
-export function shareMessage(form: Pick<ScrapForm, "number" | "data" | "status" | "signatures">, link = "") {
-  const progress = signatureProgress(form.data, form.signatures);
-  const total = brMoney(formTotal(form.data));
-  const lines = form.data.items.map(
-    (item) => `• ${item.material} — ${item.name} · ${item.quantity ?? "?"} un · ${brMoney(itemTotal(item)) || "sem valor"} · OP ${item.op || "—"} · VIN ${item.vin || "—"}`,
-  );
-  const subject = progress.complete
-    ? `Scrap Form ${form.number} assinado — ${total}`
-    : `Scrap Form ${form.number} para assinatura — ${progress.missing.map((entry) => entry.slot.label).join(", ")}`;
-  const intro = progress.complete
-    ? `Segue o Scrap Form ${form.number} com todas as assinaturas.`
-    : `Segue o Scrap Form ${form.number} para assinatura digital. Falta: ${progress.missing
-        .map((entry) => `${entry.expected} (${entry.slot.label})`)
-        .join(", ")}.`;
-  const how = progress.complete ? [] : ["", "Abra o PDF no Adobe, clique no campo do seu quadro e assine com o seu certificado. Depois devolva o PDF assinado."];
-  const body = [intro, "", ...lines, `Total: ${total}`, ...how, ...(link ? ["", link] : [])].join("\n");
-  return { subject, body };
-}
-
 /** Sugestões tiradas dos formulários já feitos (descrição, preço, classe, VIN por OP). */
 export function formHistory(forms: Pick<ScrapForm, "data" | "updatedAt">[]) {
   const materials = new Map<string, { name: string; unitPrice: number | null; classification: string; date: string }>();

@@ -4,9 +4,9 @@ import { readFileSync } from "node:fs";
 import { PDFDocument, PDFName, PDFString } from "pdf-lib";
 import { pageText } from "../lib/pdf-text.ts";
 import { dateOrder, fileDate, legacyMoney, legacyQuantity, parseLegacyCc, parseLegacyScrap, readLegacyPdf } from "../lib/legacy-import.ts";
-import { legacySlots, readScrapPdf, compareWithGenerated } from "../lib/scrap-pdf.ts";
+import { DATA_KEY, buildCcPdf, buildScrapPdf, legacySlots, readScrapPdf, compareWithGenerated } from "../lib/scrap-pdf.ts";
 import { acceptOriginal, importedMatch, keepOriginal, pdfProblems, signatureProgress } from "../lib/scrap-form.ts";
-import { ccProblems } from "../lib/cc-form.ts";
+import { ccProblems, ccTotals } from "../lib/cc-form.ts";
 
 // PDFs de teste no formato dos formulários antigos (planilha → PDF), com nomes fictícios.
 const fixture = (name: string) => new Uint8Array(readFileSync(new URL("./fixtures/legado/" + name, import.meta.url)));
@@ -18,6 +18,12 @@ test("números e datas como o Excel grava", () => {
   assert.equal(legacyMoney("-R$ 27,220.48"), -27220.48);
   assert.equal(legacyMoney("R$ 0,00"), 0);
   assert.equal(legacyMoney("R$"), null);
+  // Custo unitário do portal com mais casas.
+  assert.equal(legacyMoney("R$ 5,083"), 5.083);
+  assert.equal(legacyMoney("R$ 12,7354"), 12.7354);
+  assert.equal(legacyMoney("R$ 1.471,23"), 1471.23);
+  assert.equal(legacyMoney("-R$ 8.206,68"), -8206.68);
+  assert.equal(legacyMoney("R$ 1.234.567,89"), 1234567.89);
   assert.equal(legacyQuantity("-5386"), -5386);
   assert.equal(legacyQuantity("1.000"), 1000);
   assert.equal(legacyQuantity("1,5"), 1.5);
@@ -146,6 +152,10 @@ test("posição dos campos: referência pelo nome do portal, fora da página ou 
   // FO.FI.C.007: de cima para baixo.
   assert.deepEqual(legacySlots([at(600, 300), at(600, 400), at(602, 200)], box, "cc"), ["manager", "requester", "scm"]);
   assert.deepEqual(legacySlots([{ slot: null, center: null }], box, "scrap"), [null]);
+  // FO.FI.C.007 longo: os campos estão na última página.
+  const onPage = (x: number, y: number, page: number) => ({ slot: null, center: { x, y, page } });
+  assert.deepEqual(legacySlots([onPage(600, 400, 1), onPage(600, 300, 1)], box, "cc", 1), ["requester", "manager"]);
+  assert.deepEqual(legacySlots([onPage(600, 400, 1)], box, "cc"), [null], "Sem dizer a página, vale a primeira");
 });
 
 test("PDF antigo regravado: quem assinou conta como assinado, sem aviso de arquivo alterado", async () => {
@@ -173,4 +183,85 @@ test("PDF antigo regravado: quem assinou conta como assinado, sem aviso de arqui
   assert.equal(bad[0].check, "invalid", "Assinatura nova inválida não vira importada");
   assert.equal(importedMatch(kept, imported), true);
   assert.equal(importedMatch([{ ...later[3], check: "imported" }], imported), false, "Só as que vieram na importação");
+});
+
+// FO.FI.C.007 já emitido pelo portal (com qualquer número de páginas) volta com os mesmos dados.
+const ccApprovers = { requester: "Pessoa Solicitante", manager: "Pessoa Gestor", scm: "Pessoa SCM", finance: "Pessoa Financeiro" };
+const longItems = Array.from({ length: 75 }, (_, index) => ({
+  company: "BR00",
+  plant: "BR02",
+  wh: "7000",
+  material: `3${String(1000000 + index * 7919).slice(0, 7)}-00`,
+  description: index % 7 === 3 ? `CONJUNTO COM DESCRICAO LONGA QUE QUEBRA EM DUAS LINHAS NA CELULA DO FORMULARIO DO PORTAL ${index + 1}` : `PECA DE TESTE ${index + 1}`,
+  quantity: -((index * 37) % 400 + 1),
+  unitCost: Math.round((0.9 + index * 2.3417) * 10000) / 10000,
+  costCenter: "BR000411",
+  costCenterDescription: "Operational - Chassis",
+}));
+const longData = {
+  period: "2026-10",
+  items: longItems,
+  mainReason: "Materials listed as LOSS in warehouse 7000.",
+  reason: "LOSS",
+  action: "Write off the quantities from warehouse 7000 through cost center BR000411 - Operational - Chassis.",
+  approvers: ccApprovers,
+  scrapForms: [],
+  sapDocument: "",
+  notes: "",
+};
+
+test("FO.FI.C.007 do portal: dados gravados no PDF voltam exatos; sem eles, a leitura passa por todas as páginas", async () => {
+  const generatedAt = new Date("2026-10-07T08:00:00-03:00");
+  const bytes = await buildCcPdf({ number: "CC-2026-0008", data: longData, generatedAt });
+  const embedded = await readLegacyPdf(bytes, "qualquer.pdf");
+  assert.equal(embedded.kind, "cc");
+  assert.equal(embedded.embedded, true);
+  assert.deepEqual(embedded.kind === "cc" && embedded.data, longData);
+  // PDF emitido antes de gravar os dados (ou que perdeu o Info): lê o texto das 3 páginas.
+  const doc = await PDFDocument.load(bytes, { updateMetadata: false });
+  (doc.context.lookup(doc.context.trailerInfo.Info) as any).delete(PDFName.of(DATA_KEY));
+  const text = await readLegacyPdf(await doc.save(), "FO.FI.C.007 CC-2026-0008 Outubro-2026.pdf");
+  assert.equal(text.kind, "cc");
+  assert.equal(text.embedded, undefined);
+  assert.deepEqual(text.notes, []);
+  if (text.kind !== "cc") return;
+  assert.equal(text.data.items.length, 75);
+  assert.deepEqual(text.data.items, longItems, "Itens das páginas 1 e 2, descrições em duas linhas, custo com 4 casas");
+  assert.equal(text.data.period, "2026-10");
+  assert.equal(text.data.reason, "LOSS");
+  assert.equal(text.data.action, longData.action);
+  assert.deepEqual(text.data.approvers, ccApprovers, "Quadro de aprovação na última página");
+  // Scrap Form também grava os dados.
+  const scrapData = {
+    formDate: "2026-09-24",
+    items: [{ date: "2026-09-24", material: "11272431-00", quantity: 1, name: "UNID DE CONTROLE ELETR EBS 5S", defect: "Componente queimado.", cause: "F", vin: "1076", op: "19000002673", unitPrice: 1054.87, classification: "B" }],
+    approvers: { production: "Pessoa Producao", quality: "Pessoa Qualidade", logistics: "Pessoa Logistica", finance: "Pessoa Financeiro" },
+    costCenter: "",
+    sapDocument: "",
+    pr: "",
+    prDate: "",
+    po: "",
+    notes: "",
+  };
+  const scrap = await readLegacyPdf(await buildScrapPdf({ number: "SCRAP-2026-0009", data: scrapData, generatedAt }), "x.pdf");
+  assert.equal(scrap.kind, "scrap");
+  assert.deepEqual(scrap.kind === "scrap" && scrap.data, scrapData);
+});
+
+test("FO.FI.C.007 antigo do portal (20 itens e assinaturas na página 1, resto na 2) é lido inteiro", async () => {
+  const bytes = new Uint8Array(readFileSync(new URL("./fixtures/cc/portal-antigo-57.pdf", import.meta.url)));
+  const result = await readLegacyPdf(bytes, "FO.FI.C.007 CC-2026-0005 Outubro-2026 - para assinatura.pdf");
+  assert.equal(result.kind, "cc");
+  if (result.kind !== "cc") return;
+  assert.deepEqual(result.notes, []);
+  assert.equal(result.data.items.length, 57);
+  assert.equal(ccTotals(result.data).cost, -948348.81);
+  assert.equal(result.data.items[4].description, "CONJUNTO DE TESTE COM DESCRICAO MUITO LONGA PARA QUEBRAR EM DUAS LINHAS NA CELULA DO FORMULARIO 5");
+  assert.equal(result.data.items[2].unitCost, 8.9262);
+  assert.equal(result.data.items[56].material, "21443464-00");
+  assert.equal(result.data.reason, "LOSS");
+  assert.deepEqual(result.data.approvers, ccApprovers);
+  const reading = await readScrapPdf(bytes, { legacy: true, kind: "cc" });
+  assert.equal(reading.formNumber, "CC-2026-0005");
+  assert.deepEqual(reading.fields.map((field) => field.slot), ["requester", "manager", "scm", "finance"]);
 });

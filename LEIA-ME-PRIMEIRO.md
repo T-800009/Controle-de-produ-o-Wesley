@@ -10,6 +10,52 @@ O robô roda no Windows, com o SAP aberto e logado. Ele roda a MB51 (BR02, movim
 
 ---
 
+# MB51-71 — Adicionar qualquer PDF, e-mail formal pronto e aba sempre na versão nova
+
+## Adicionar PDFs (antes "Importar PDFs existentes")
+
+Nas abas Scrap Forms e Baixa em CC, **Adicionar PDFs** guarda qualquer PDF de Scrap Form ou FO.FI.C.007: feito no Excel, emitido pelo portal, assinado ou não. O portal lê os itens e as assinaturas e guarda o arquivo.
+
+- **PDF sem assinatura:** entra com o PDF guardado, em "Aguardando assinatura". Antes virava rascunho sem o arquivo.
+- **PDF de um formulário que já está no portal** (por exemplo, o CC-2026-0003 assinado): entra como versão nova desse formulário.
+  - Se esse PDF tiver menos assinaturas do que o formulário já tem, ele vem desmarcado. Marque para guardar mesmo assim.
+- **PDF emitido pelo portal com um número que não está na lista:** entra como formulário novo.
+- **Arquivo que já está guardado:** aparece como "Já está guardado no portal (nº)" e não é repetido.
+- **FO.FI.C.007 com várias páginas:** a leitura passa por todas, tanto no formato antigo (20 itens na página 1) quanto no novo (40 por página). Descrições quebradas em duas linhas vêm inteiras, e o custo unitário vem com as casas que reproduzem o total.
+- **PDF escaneado (sem texto):** entra com o PDF guardado e os itens vazios, para preencher em "Salvar dados".
+- **Dados gravados no PDF:** os PDFs emitidos a partir desta versão levam os dados do formulário (Info "WBYDData"). Quando um deles volta ao portal, os dados entram exatos, sem depender da leitura do texto.
+
+O único limite que continua é 1,5 MB por PDF.
+
+## E-mail formal pronto
+
+No quadro **Enviar** do Scrap Form e da Baixa em CC, o e-mail já vem escrito, em tom formal:
+
+- saudação pela hora do dia;
+- resumo (itens, quantidade, valor, centro de custo, depósito, motivo);
+- lista dos itens (até 15; o resto fica no PDF);
+- quem já assinou e quem falta;
+- como assinar;
+- despedida com o seu nome.
+
+No formulário já assinado, o e-mail encaminha o documento e pede o lançamento no SAP. Se o Doc. SAP já estiver preenchido, o e-mail só informa o número.
+
+- **E-mail pronto com PDF:** baixa um rascunho .eml. Ao abrir o arquivo, o Outlook mostra a mensagem nova formatada, com o PDF anexado. É só conferir e enviar.
+- **Abrir no e-mail:** abre o programa de e-mail padrão com um texto mais curto e baixa o PDF para anexar.
+- **Copiar texto:** copia formatado, pronto para colar no Outlook ou no Teams.
+- **Assinar o e-mail como:** o nome que vai na despedida. O portal guarda esse nome no navegador.
+- O assunto e a prévia do e-mail ficam logo abaixo dos botões.
+
+## Aba sempre na versão nova
+
+Uma aba aberta antes de uma atualização continuava com o código antigo e gerava o PDF no formato velho. Agora:
+
+- **Gerar PDF para assinatura** confere a versão publicada. Se a aba estiver velha, o portal salva o rascunho, recarrega a página e gera o PDF já na versão nova, uma vez só.
+- Quando a aba volta a ficar em foco e há versão nova, aparece a faixa **O portal foi atualizado → Atualizar agora**.
+- A versão fica num lugar só (`lib/version.ts`), o mesmo no Worker (`/api/version`) e no rodapé.
+
+---
+
 # MB51-70 — Anexar qualquer PDF e FO.FI.C.007 com as assinaturas no fim
 
 ## Anexar PDF assinado aceita qualquer PDF
