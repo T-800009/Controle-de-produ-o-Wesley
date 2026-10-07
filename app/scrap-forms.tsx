@@ -43,9 +43,9 @@ import {
   formHistory,
   accepted,
   acceptOriginal,
+  acceptAttached,
   formTotal,
   isTranscription,
-  keepOriginal,
   itemTotal,
   materialCode,
   parseBrNumber,
@@ -70,6 +70,7 @@ import {
   ccFromScrapForms,
   ccFromSpreadsheet,
   ccItemTotal,
+  ccLayout,
   ccProblems,
   ccShareMessage,
   ccTotals,
@@ -127,8 +128,6 @@ type Review = {
   name: string;
   bytes: Uint8Array;
   reading: ScrapPdfReading;
-  blockers: string[];
-  warnings: string[];
   notes: string[];
 };
 type Message = { kind: "ok" | "error"; text: string };
@@ -1058,11 +1057,10 @@ function SignatureSection<F extends AnyForm>({ kind, form, canEdit, runner, onSa
     await run("read", async () => {
       const bytes = new Uint8Array(await file.arrayBuffer());
       const { readScrapPdf } = await pdfTools();
-      // Formulário importado (PDF feito no Excel): os campos valem pela posição na linha de assinaturas.
-      const legacy = isTranscription(form);
-      const read = await readScrapPdf(bytes, { legacy, kind });
-      // Importado: as assinaturas que vieram na importação continuam valendo; as novas são conferidas.
-      const reading = legacy ? { ...read, signatures: keepOriginal(read.signatures, form.signatures) } : read;
+      // Qualquer PDF entra. Sem os quadros do portal (PDF feito no Excel), os campos valem pela posição.
+      const read = await readScrapPdf(bytes, { legacy: true, kind });
+      // Vale quem assinou no arquivo, mesmo que ele tenha sido regravado depois.
+      const reading = { ...read, signatures: acceptAttached(read.signatures) };
       setReview(await reviewUpload(kind, form, file.name, bytes, reading));
     });
     if (fileInput.current) fileInput.current.value = "";
@@ -1077,7 +1075,7 @@ function SignatureSection<F extends AnyForm>({ kind, form, canEdit, runner, onSa
       setMessage({
         kind: "ok",
         text: after.complete
-          ? "Todas as assinaturas conferidas. O PDF final está guardado: use Enviar para mandar ao Financeiro / arquivo."
+          ? "Todos os quadros assinados. O PDF final está guardado: use Enviar para mandar ao Financeiro / arquivo."
           : `Versão ${next.fileVersion} guardada. Falta: ${after.missing.map((entry) => `${entry.expected} (${entry.slot.label})`).join(", ")}.`,
       });
     });
@@ -1166,7 +1164,7 @@ function FileHistory({ kind, form, runner }: { kind: DocKind; form: AnyForm; run
         {[...form.files].reverse().map((file) => (
           <li key={file.version}>
             <span>
-              v{file.version} · {file.kind === "generated" ? "emitido pelo portal" : "devolvido com assinaturas"} · {brDateTime(file.createdAt)} · {(file.size / 1024).toFixed(0)} KB
+              v{file.version} · {file.kind === "generated" ? "emitido pelo portal" : "anexado"} · {file.name} · {brDateTime(file.createdAt)} · {(file.size / 1024).toFixed(0)} KB
             </span>
             <button disabled={!!runner.busy} onClick={() => runner.run("download", () => downloadPdf(kind, form, file.version, file.name))}>
               <Download size={14} />
@@ -1790,7 +1788,6 @@ const ccDefaultsOf = (item?: Partial<CcItem> | null): Partial<CcDefaults> =>
 const blankCcItem = (item: CcItem) => !item.material && !item.description && item.quantity === null && item.unitCost === null;
 /** A partir daqui os itens viram uma tabela compacta (lista vinda de planilha). */
 const CC_COMPACT_FROM = 13;
-const ccPages = (items: number) => 1 + Math.max(0, Math.ceil((items - 20) / 40));
 /** Primeira aba da planilha que tenha Material e quantidade → itens do FO.FI.C.007. */
 async function readCcSheet(file: File, defaults: Partial<CcDefaults>) {
   const x = await import("xlsx");
@@ -2006,14 +2003,14 @@ function CcFormDialog({
       filled.current = new Map(keptIndex.flatMap((old, index) => (filled.current.has(old) ? [[index, filled.current.get(old)!] as [number, string]] : [])));
       change({ ...data, items, mainReason: data.mainReason || found.mainReason, reason: data.reason || found.reason, action: data.action || found.action });
       const total = ccTotals({ items: found.items });
-      const pages = ccPages(items.length);
+      const pages = ccLayout(items.length).pages;
       setMessage({
         kind: "ok",
         text:
           `${found.items.length} itens importados de "${file.name}" · Qtd. ${qtyInput(total.quantity)} · ${brMoney(total.cost)}.` +
           (found.skipped ? ` ${found.skipped} linha(s) sem material ou quantidade ficaram de fora.` : "") +
           ` Estoque vira quantidade negativa (baixa); custo unitário = valor ÷ quantidade.` +
-          (pages > 1 ? ` O PDF vai ter ${pages} páginas (assinaturas na 1ª).` : "") +
+          (pages > 1 ? ` O PDF vai ter ${pages} páginas, com as assinaturas no fim.` : "") +
           ` Confira o centro de custo e clique em Gerar PDF para assinatura.`,
       });
     });
@@ -2248,7 +2245,7 @@ function CcFormDialog({
                   </button>
                 )}
                 {data.items.length >= MAX_CC_ITEMS && <small>Máximo de {MAX_CC_ITEMS} itens: faça outra baixa para o restante.</small>}
-                {data.items.length > 20 && data.items.length < MAX_CC_ITEMS && <small>PDF com {ccPages(data.items.length)} páginas: 20 itens e as assinaturas na 1ª, o resto nas seguintes.</small>}
+                {ccLayout(data.items.length).pages > 1 && data.items.length < MAX_CC_ITEMS && <small>PDF com {ccLayout(data.items.length).pages} páginas: 40 itens por página e as assinaturas no fim.</small>}
               </div>
             </fieldset>
           ) : (
@@ -2645,72 +2642,33 @@ function CcItemsTable({ items }: { items: CcItem[] }) {
 /* Conferência do PDF devolvido                                              */
 /* ------------------------------------------------------------------------ */
 
+/** Qualquer PDF pode ser anexado: aqui só aparece o que ele traz (assinaturas e o que falta). */
 async function reviewUpload(kind: DocKind, form: AnyForm, name: string, bytes: Uint8Array, reading: ScrapPdfReading): Promise<Review> {
-  const blockers: string[] = [],
-    warnings: string[] = [],
-    notes: string[] = [];
-  if (reading.formNumber && reading.formNumber !== form.number) blockers.push(`Este PDF é do formulário ${reading.formNumber}, não do ${form.number}.`);
-  if (!reading.signatures.length) blockers.push("Este PDF ainda não tem nenhuma assinatura digital. Anexe o arquivo devolvido depois de assinado no Adobe.");
-  const latest = form.files.at(-1);
-  if (latest && latest.sha256 === reading.sha256) blockers.push("Este arquivo é igual à versão já guardada.");
-  // Assinaturas já registradas precisam continuar no arquivo novo (senão é uma cópia mais antiga).
-  const lost = form.signatures.filter(
-    (old) => accepted(old) && !reading.signatures.some((entry) => accepted(entry) && entry.slot === old.slot && entry.signer === old.signer && entry.signedAt === old.signedAt),
-  );
-  for (const old of lost) blockers.push(`A assinatura de ${old.signer} (${old.slot ? slotById(old.slot).label : old.field}) não está neste arquivo: é uma cópia mais antiga. Anexe o PDF mais recente.`);
-  // A página tem de ser a mesma emitida pelo portal (itens, valores, nomes) e, por cima, só campos de assinatura.
-  // Formulário importado: a página tem de ser a mesma do PDF original guardado na importação.
+  const notes: string[] = [];
+  // Mesmo conteúdo do PDF guardado: fica registrado como confirmação. Diferente não impede nada.
   const imported = !form.files.some((file) => file.kind === "generated");
-  const generated = imported ? form.files[0] : form.files.filter((file) => file.kind === "generated").at(-1);
-  const origin = imported ? "do PDF importado" : "do PDF emitido pelo portal";
-  if (!generated) warnings.push("Não há PDF guardado para comparar o conteúdo.");
-  else {
-    const { compareWithGenerated } = await pdfTools();
-    let comparison: Awaited<ReturnType<typeof compareWithGenerated>> | null = null;
+  const original = imported ? form.files[0] : form.files.filter((file) => file.kind === "generated").at(-1);
+  if (original && (!reading.formNumber || reading.formNumber === form.number))
     try {
-      comparison = await compareWithGenerated(await fetchPdf(form, generated.version), bytes);
+      const { compareWithGenerated } = await pdfTools();
+      const comparison = await compareWithGenerated(await fetchPdf(form, original.version), bytes);
+      if (comparison.sameContent) notes.push(`Itens, valores e nomes são os mesmos ${imported ? "do PDF importado" : "do PDF emitido pelo portal"}.`);
     } catch {
-      comparison = null;
+      // Sem comparação: o arquivo entra do mesmo jeito.
     }
-    if (!comparison) blockers.push(`Não foi possível comparar este PDF com o ${origin.slice(3)}. Tente de novo.`);
-    else {
-      if (!comparison.sameContent)
-        blockers.push(
-          comparison.pages !== comparison.originalPages
-            ? `O PDF tem ${comparison.pages} página(s) e o ${origin.slice(3)} tem ${comparison.originalPages}. Assinem o PDF baixado aqui.`
-            : `O conteúdo da página não é o mesmo ${origin} (itens, valores ou nomes diferentes, ou PDF de outra versão). Assinem o PDF baixado aqui.`,
-        );
-      if (comparison.extraAnnotations.length)
-        blockers.push(`Há desenhos ou textos colocados por cima do formulário (${comparison.extraAnnotations.join(", ")}). Só as assinaturas podem ser acrescentadas.`);
-      warnings.push(...comparison.notes);
-      if (comparison.sameContent && !comparison.extraAnnotations.length) notes.push(`Itens, valores e nomes são os mesmos ${origin}.`);
-    }
-  }
   const after = signatureProgress(form.data, reading.signatures, kind);
   if (after.complete) notes.push("Com este arquivo, todos os quadros obrigatórios ficam assinados.");
   else notes.push(`Depois deste arquivo ainda falta: ${after.missing.map((entry) => `${entry.expected} (${entry.slot.label})`).join(", ")}.`);
-  return { name, bytes, reading, blockers, warnings: [...warnings, ...after.issues], notes };
+  return { name, bytes, reading, notes };
 }
 
 function ReviewPanel({ review, busy, onCancel, onSave }: { review: Review; busy: boolean; onCancel: () => void; onSave: () => void }) {
   return (
-    <div className="scrap-review" role="region" aria-label="Conferência do PDF anexado">
+    <div className="scrap-review" role="region" aria-label="PDF anexado">
       <b>
         {review.name} · {(review.bytes.length / 1024).toFixed(0)} KB · {review.reading.signatures.length} assinatura(s)
       </b>
       <SignatureList signatures={review.reading.signatures} />
-      {review.blockers.map((text) => (
-        <p key={text} className="scrap-review-block">
-          <XCircle size={14} />
-          {text}
-        </p>
-      ))}
-      {review.warnings.map((text) => (
-        <p key={text} className="scrap-review-warn">
-          <TriangleAlert size={14} />
-          {text}
-        </p>
-      ))}
       {review.notes.map((text) => (
         <p key={text} className="scrap-review-note">
           <CheckCircle2 size={14} />
@@ -2721,7 +2679,7 @@ function ReviewPanel({ review, busy, onCancel, onSave }: { review: Review; busy:
         <button disabled={busy} onClick={onCancel}>
           Cancelar
         </button>
-        <button className="primary" disabled={busy || review.blockers.length > 0} onClick={onSave}>
+        <button className="primary" disabled={busy} onClick={onSave}>
           <Save size={16} />
           {busy ? "Salvando…" : "Salvar esta versão"}
         </button>
@@ -2731,7 +2689,7 @@ function ReviewPanel({ review, busy, onCancel, onSave }: { review: Review; busy:
 }
 
 function SignatureList({ signatures }: { signatures: ScrapSignature[] }) {
-  if (!signatures.length) return <p className="scrap-review-warn">Nenhuma assinatura digital no arquivo.</p>;
+  if (!signatures.length) return null;
   return (
     <ul className="scrap-signature-list">
       {signatures.map((signature, index) => (

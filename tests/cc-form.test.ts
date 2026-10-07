@@ -9,6 +9,7 @@ import {
   ccFromScrapForms,
   ccFromSpreadsheet,
   ccItemTotal,
+  ccLayout,
   ccProblems,
   ccShareMessage,
   ccTotals,
@@ -317,42 +318,64 @@ test("planilha de verdade (.xlsx feito pelo SheetJS) lida como no portal", () =>
   assert.equal(ccTotals(result).cost, -2500.36);
 });
 
-test("PDF com muitos itens: 20 na 1ª página com as assinaturas, o resto em páginas de continuação", async () => {
-  const items = Array.from({ length: 75 }, (_, index) => ({ ...item, material: `1000${String(index + 1).padStart(4, "0")}-00`, quantity: -(index + 1), unitCost: 1.2345 }));
-  const many = { ...data, items };
-  const generatedAt = new Date("2026-09-24T12:00:00-03:00");
-  const bytes = await buildCcPdf({ number: "CC-2026-0003", data: many, generatedAt });
+test("PDF com muitos itens: 40 por página e as assinaturas embaixo do último item", async () => {
   const { PDFDocument } = await import("pdf-lib");
+  const generatedAt = new Date("2026-09-24T12:00:00-03:00");
+  const items = Array.from({ length: 75 }, (_, index) => ({ ...item, material: `1000${String(index + 1).padStart(4, "0")}-00`, quantity: -(index + 1), unitCost: 1.2345 }));
+  const texts = (doc: Awaited<ReturnType<typeof PDFDocument.load>>) => doc.getPages().map((_, index) => pageText(doc, index).runs.map((run) => run.text).join(" | "));
+  const annots = (doc: Awaited<ReturnType<typeof PDFDocument.load>>) => doc.getPages().map((page) => page.node.Annots()?.size() ?? 0);
+  assert.deepEqual(ccLayout(20), { chunks: [20], approvalPage: 0, pages: 1 });
+  assert.deepEqual(ccLayout(57), { chunks: [40, 17], approvalPage: 1, pages: 2 });
+  assert.deepEqual(ccLayout(75), { chunks: [40, 35], approvalPage: 2, pages: 3 });
+
+  // 57 itens (como a LOSS 7000): 40 + 17, TOTAL e assinaturas na página 2.
+  const data57 = { ...data, items: items.slice(0, 57) };
+  const bytes57 = await buildCcPdf({ number: "CC-2026-0003", data: data57, generatedAt });
+  const doc57 = await PDFDocument.load(bytes57);
+  assert.equal(doc57.getPageCount(), 2);
+  const [first, second] = texts(doc57);
+  assert.match(first, /Itens 1 a 40 de 57/);
+  assert.match(first, /Continua na página 2/);
+  assert.match(first, /10000040-00/);
+  assert.doesNotMatch(first, /APPROVAL|TOTAL \(/, "Página 1 só com itens");
+  assert.match(first, /Página 1\/2/);
+  assert.doesNotMatch(first + second, /Nº CC-/, "Sem o número em vermelho no cabeçalho");
+  assert.match(second, /Continuação · itens 41 a 57 de 57/);
+  assert.match(second, /TOTAL \(57 itens\)/);
+  assert.match(second, /APPROVAL/);
+  assert.match(second, /Página 2\/2/);
+  assert.match(first, /R\$ 1,2345/, "Custo unitário com 4 casas");
+  assert.deepEqual(annots(doc57), [0, 4], "Os quatro campos de assinatura na página 2");
+  const reading = await readScrapPdf(bytes57);
+  assert.equal(reading.formNumber, "CC-2026-0003", "Número continua no PDF (Info e rodapé)");
+  assert.deepEqual(reading.fields.map((field) => field.slot), ["requester", "manager", "scm", "finance"]);
+  assert.match(new TextDecoder("latin1").decode(bytes57), /WBYDSignatureBoxes \(requester:[\d.,]+@1;/, "Quadros gravados com a página");
+
+  // 75 itens: 40 + 35 não deixa espaço; as assinaturas ganham a página 3.
+  const bytes = await buildCcPdf({ number: "CC-2026-0003", data: { ...data, items }, generatedAt });
   const doc = await PDFDocument.load(bytes);
-  assert.equal(doc.getPageCount(), 3, "20 + 40 + 15");
-  const texts = [0, 1, 2].map((index) => pageText(doc, index).runs.map((run) => run.text).join(" | "));
-  assert.match(texts[0], /TOTAL \(75 itens · continua na página 2\)/);
-  assert.match(texts[0], /Página 1\/3/);
-  assert.match(texts[0], /10000020-00/);
-  assert.doesNotMatch(texts[0], /10000021-00/);
-  assert.match(texts[1], /Continuação · itens 21 a 60 de 75/);
-  assert.match(texts[1], /10000060-00/);
-  assert.match(texts[2], /Continuação · itens 61 a 75 de 75/);
-  assert.match(texts[2], /TOTAL \(75 itens\)/);
-  assert.match(texts[2], /Página 3\/3/);
-  assert.match(texts[0], /R\$ 1,2345/, "Custo unitário com 4 casas");
-  const reading = await readScrapPdf(bytes);
-  assert.equal(reading.pages, 3);
-  assert.deepEqual(
-    reading.fields.map((field) => field.slot),
-    ["requester", "manager", "scm", "finance"],
-    "Só os quatro quadros, na 1ª página",
-  );
-  assert.equal(doc.getPage(1).node.Annots()?.size() ?? 0, 0);
+  const pages = texts(doc);
+  assert.equal(pages.length, 3);
+  assert.match(pages[1], /TOTAL \(75 itens\)/);
+  assert.doesNotMatch(pages[1], /APPROVAL/);
+  assert.match(pages[2], /Aprovação · 75 itens nas páginas anteriores/);
+  assert.match(pages[2], /APPROVAL/);
+  assert.deepEqual(annots(doc), [0, 0, 4]);
+
+  // 22 itens: página única, tudo junto.
+  const single = await PDFDocument.load(await buildCcPdf({ number: "CC-2026-0003", data: { ...data, items: items.slice(0, 22) }, generatedAt }));
+  assert.equal(single.getPageCount(), 1);
+  assert.match(texts(single)[0], /TOTAL \(22 itens\).*APPROVAL/s);
+
   // Item trocado só na última página: não é o mesmo formulário.
-  const same = await buildCcPdf({ number: "CC-2026-0003", data: many, generatedAt });
+  const same = await buildCcPdf({ number: "CC-2026-0003", data: { ...data, items }, generatedAt });
   assert.equal((await compareWithGenerated(bytes, same)).sameContent, true);
-  const changed = await buildCcPdf({ number: "CC-2026-0003", data: { ...many, items: items.map((entry, index) => (index === 74 ? { ...entry, quantity: -1 } : entry)) }, generatedAt });
+  const changed = await buildCcPdf({ number: "CC-2026-0003", data: { ...data, items: items.map((entry, index) => (index === 74 ? { ...entry, quantity: -1 } : entry)) }, generatedAt });
   const comparison = await compareWithGenerated(bytes, changed);
   assert.equal(comparison.sameContent, false);
   assert.equal(comparison.originalPages, 3);
   // Limite máximo cabe no que o servidor guarda.
   const full = await buildCcPdf({ number: "CC-2026-0004", data: { ...data, items: Array.from({ length: MAX_CC_ITEMS }, (_, index) => ({ ...items[index % items.length] })) }, generatedAt });
-  assert.equal((await PDFDocument.load(full)).getPageCount(), 8, "20 + 7 × 40");
+  assert.equal((await PDFDocument.load(full)).getPageCount(), 8, "7 × 40 + 20 com as assinaturas");
   assert.ok(full.length < 400_000, `PDF de ${MAX_CC_ITEMS} itens com ${full.length} bytes`);
 });

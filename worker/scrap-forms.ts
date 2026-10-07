@@ -1,7 +1,7 @@
 import type {PortalDatabase} from './database';
 import type {PortalRole} from './auth';
 import {initial,ensureSchema} from './storage';
-import {MAX_PDF_BYTES,acceptOriginal,importedMatch,isIsoDate,isTranscription,sanitizeFormData,sanitizeSignatures,statusFromSignatures,type DocKind,type ScrapFileMeta,type ScrapForm,type ScrapSignature,type ScrapStatus} from '../lib/scrap-form';
+import {MAX_PDF_BYTES,acceptOriginal,isIsoDate,isTranscription,sanitizeFormData,sanitizeSignatures,statusFromSignatures,type DocKind,type ScrapFileMeta,type ScrapForm,type ScrapSignature,type ScrapStatus} from '../lib/scrap-form';
 import {sanitizeCcData,type CcForm} from '../lib/cc-form';
 
 /**
@@ -226,7 +226,8 @@ async function sha256(bytes:Uint8Array){
 const safeName=(value:unknown,fallback:string)=>{const name=String(value??'').replace(/[\u0000-\u001f\u007f\\/:*?"<>|]+/g,'-').replace(/\s+/g,' ').trim().slice(0,160);return /\.pdf$/i.test(name)?name:fallback;};
 
 /** Grava uma nova versão do PDF. "generated": emitido pelo portal (rascunho → assinatura).
- * "signed": devolvido com assinaturas; o status vem da mesma regra usada na tela. */
+ * "signed": qualquer PDF anexado depois de emitido (com ou sem assinaturas, de
+ * outro formulário, igual ao anterior); o status vem das assinaturas do arquivo. */
 export async function uploadScrapPdf(db:PortalDatabase,payload:{id?:unknown;revision?:unknown;kind?:unknown;name?:unknown;pdf?:unknown;signatures?:unknown},role:PortalRole,docType:DocKind='scrap'){
  await scrapSchema(db);
  const form=await current(db,payload.id,payload.revision,docType);
@@ -234,12 +235,11 @@ export async function uploadScrapPdf(db:PortalDatabase,payload:{id?:unknown;revi
  const kind=payload.kind;
  if(kind!=='generated'&&kind!=='signed')throw new ScrapError('Tipo de arquivo inválido.');
  if(typeof payload.pdf!=='string')throw new ScrapError('Envie o PDF.');
- if(payload.pdf.length>Math.ceil(MAX_PDF_BYTES/3)*4+8)throw new ScrapError('O PDF passa de 1,5 MB. O formulário gerado pelo portal fica bem abaixo disso: confira se é o arquivo certo (não regrave o PDF assinado em outro programa, isso invalida as assinaturas).',413);
+ if(payload.pdf.length>Math.ceil(MAX_PDF_BYTES/3)*4+8)throw new ScrapError('O PDF passa de 1,5 MB, o limite do portal.',413);
  const {clean,bytes}=decodeBase64(payload.pdf);
- if(bytes.length>MAX_PDF_BYTES)throw new ScrapError('O PDF passa de 1,5 MB. O formulário gerado pelo portal fica bem abaixo disso: confira se é o arquivo certo (não regrave o PDF assinado em outro programa, isso invalida as assinaturas).',413);
+ if(bytes.length>MAX_PDF_BYTES)throw new ScrapError('O PDF passa de 1,5 MB, o limite do portal.',413);
  if(!countBytes(bytes.subarray(0,1024),'%PDF-'))throw new ScrapError('O arquivo enviado não é um PDF.');
  const hash=await sha256(bytes);
- const latest=form.files.at(-1);
  let status:ScrapStatus,signatures:ScrapSignature[]=[];
  if(kind==='generated'){
   if(form.status!=='draft')throw new ScrapError('Este formulário já foi emitido. Use Reabrir para gerar outro PDF.',409);
@@ -249,11 +249,7 @@ export async function uploadScrapPdf(db:PortalDatabase,payload:{id?:unknown;revi
   status='signing';
  }else{
   if(form.status==='draft')throw new ScrapError('Gere o PDF para assinatura antes de anexar a versão assinada.',409);
-  if(latest&&latest.sha256===hash)throw new ScrapError('Este PDF é igual à versão atual. Anexe o arquivo devolvido com a nova assinatura.',409);
   signatures=valid(()=>sanitizeSignatures(payload.signatures));
-  if(!signatures.length)throw new ScrapError('Este PDF não tem nenhuma assinatura digital.');
-  // Assinatura aceita sem conferência só a que veio na importação do próprio formulário.
-  if(!importedMatch(signatures,isTranscription(form)?form.signatures:[]))throw new ScrapError('Leitura de assinaturas inválida.');
   // Conferência barata: cada assinatura conferida no navegador tem um /ByteRange no arquivo.
   const checked=signatures.filter(signature=>signature.check==='valid').length;
   if(countBytes(bytes,'/ByteRange')<checked)throw new ScrapError('O arquivo não tem as assinaturas informadas. Anexe de novo o PDF assinado.');

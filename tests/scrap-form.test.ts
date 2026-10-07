@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import {
   SLOTS,
+  acceptAttached,
   emptyForm,
   emptyItem,
   financeRequired,
@@ -132,11 +133,18 @@ test("progresso das assinaturas: quem falta, assinatura inválida e mesma pessoa
   assert.match(unchecked.issues.join("\n"), /Não foi possível conferir a assinatura de Rosy/);
   const self = signatureProgress(data, [...all.slice(0, 3), signature("finance", "Rosy", { selfSigned: true, coversWholeFile: true })]);
   assert.equal(self.complete, true);
-  assert.match(self.issues.join("\n"), /ID digital próprio \(autoassinado\)/);
+  assert.deepEqual(self.issues, [], "ID digital próprio não gera aviso");
   const twice = signatureProgress(data, [signature("production", "André"), signature("quality", "André", { coversWholeFile: true })]);
   assert.match(twice.issues.join("\n"), /mesma pessoa \(andré\) assinou Produção e Qualidade/);
   const changed = signatureProgress(data, all.map((entry) => ({ ...entry, coversWholeFile: false })));
-  assert.match(changed.issues.join("\n"), /alterações depois da última assinatura/);
+  assert.deepEqual(changed.issues, [], "Arquivo mexido depois da assinatura não gera aviso");
+  // PDF anexado: assinatura que não dá para conferir conta como assinada; a conferida continua "valid".
+  const attached = acceptAttached([...all.slice(0, 3), signature("finance", "Rosy", { check: "invalid", coversWholeFile: true, detail: "regravado" })]);
+  assert.deepEqual(attached.map((entry) => entry.check), ["valid", "valid", "valid", "imported"]);
+  assert.equal(attached[3].detail, "Assinatura do PDF anexado.");
+  assert.equal(statusFromSignatures(data, attached), "signed");
+  assert.deepEqual(signatureProgress(data, attached).issues, []);
+  assert.deepEqual(acceptAttached([{ ...all[0], check: "unchecked" }])[0].check, "imported");
 });
 
 test("nome do arquivo segue o padrão da equipe e a mensagem diz quem falta", () => {
@@ -255,13 +263,16 @@ test("datas do PDF e posição dos quadros", () => {
   assert.equal(pdfDate("D:20260506150804-03'00'"), "2026-05-06T18:08:04.000Z");
   assert.equal(pdfDate("D:20260506150804Z"), "2026-05-06T15:08:04.000Z");
   const boxes = [
-    { slot: "production" as const, x1: 108, y1: 95, x2: 266, y2: 137 },
-    { slot: "logistics" as const, x1: 433, y1: 95, x2: 591, y2: 137 },
+    { slot: "production" as const, x1: 108, y1: 95, x2: 266, y2: 137, page: 0 },
+    { slot: "logistics" as const, x1: 433, y1: 95, x2: 591, y2: 137, page: 0 },
   ];
   assert.equal(slotFromPosition({ x: 150, y: 110, page: 0 }, boxes), "production");
   assert.equal(slotFromPosition({ x: 500, y: 120, page: 0 }, boxes), "logistics");
   assert.equal(slotFromPosition({ x: 500, y: 555, page: 0 }, boxes), null, "mesma coluna, mas no cabeçalho");
   assert.equal(slotFromPosition({ x: 500, y: 120, page: 1 }, boxes), null, "outra página");
+  // FO.FI.C.007 com várias páginas: o quadro diz em que página está.
+  assert.equal(slotFromPosition({ x: 500, y: 120, page: 1 }, [{ ...boxes[1], page: 1 }]), "logistics");
+  assert.equal(slotFromPosition({ x: 500, y: 120, page: 0 }, [{ ...boxes[1], page: 1 }]), null);
 });
 
 const attack = (name: string) => fixture("ataques/" + name);

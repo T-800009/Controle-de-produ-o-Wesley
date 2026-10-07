@@ -291,6 +291,14 @@ const sameSignature = (a: ScrapSignature, b: ScrapSignature) => a.field === b.fi
 /** PDF novo de um formulário importado: as assinaturas que vieram na importação continuam aceitas; as novas são conferidas. */
 export const keepOriginal = (signatures: ScrapSignature[], previous: ScrapSignature[]): ScrapSignature[] =>
   signatures.map((signature) => (previous.some((old) => old.check === "imported" && sameSignature(old, signature)) ? { ...signature, check: "imported", detail: ORIGINAL } : signature));
+const ATTACHED = "Assinatura do PDF anexado.";
+/**
+ * PDF anexado ("Anexar PDF assinado"): vale o que está no arquivo. Assinatura
+ * conferida fica "valid"; a que não dá para conferir (arquivo regravado depois,
+ * formato antigo) conta do mesmo jeito, como a da importação.
+ */
+export const acceptAttached = (signatures: ScrapSignature[]): ScrapSignature[] =>
+  signatures.map((signature) => (signature.check === "valid" ? signature : { ...signature, check: "imported", detail: ATTACHED }));
 /** Toda assinatura "imported" que chega tem de ser uma das que vieram na importação. */
 export const importedMatch = (signatures: ScrapSignature[], previous: ScrapSignature[]) =>
   signatures.every((signature) => signature.check !== "imported" || previous.some((old) => old.check === "imported" && sameSignature(old, signature)));
@@ -312,8 +320,6 @@ export function signatureProgress(data: ProgressData, signatures: ScrapSignature
     const who = signature.signer || "alguém";
     if (signature.check === "invalid") issues.push(`A assinatura de ${who} (${where(signature)}) não confere: ${signature.detail || "o PDF foi alterado depois dela."}`);
     if (signature.check === "unchecked") issues.push(`Não foi possível conferir a assinatura de ${who} (${where(signature)}): ${signature.detail || "confira no Adobe."}`);
-    if (signature.check === "valid" && signature.selfSigned)
-      issues.push(`${who} (${where(signature)}) assinou com um ID digital próprio (autoassinado), não emitido pela certificadora da empresa.`);
     if (!signature.slot) issues.push(`${who} assinou num campo criado à parte (${signature.field}), fora dos quadros do formulário.`);
     else if (!list.some((slot) => slot.id === signature.slot)) issues.push(`${who} assinou um campo (${signature.field}) que não é deste formulário.`);
   }
@@ -324,12 +330,6 @@ export function signatureProgress(data: ProgressData, signatures: ScrapSignature
   }
   for (const [signer, labels] of bySigner)
     if (labels.length > 1) issues.push(`A mesma pessoa (${signer}) assinou ${labels.join(" e ")}. Confira se está certo.`);
-  const latest = signatures.filter(accepted).sort((a, b) => String(b.signedAt || "").localeCompare(String(a.signedAt || "")))[0];
-  // Formulário importado: alterações antigas no arquivo não interessam.
-  if (signatures.length && !signatures.some((signature) => signature.coversWholeFile) && !signatures.some((signature) => signature.check === "imported"))
-    issues.push(
-      `O arquivo recebeu alterações depois da última assinatura${latest?.signer ? ` (${latest.signer})` : ""}. Confira no Adobe se as assinaturas aparecem como válidas.`,
-    );
   return { slots, signed, missing, issues, complete: missing.length === 0 && signatures.length > 0 };
 }
 export function statusFromSignatures(data: ProgressData, signatures: ScrapSignature[], kind: DocKind = "scrap"): ScrapStatus {

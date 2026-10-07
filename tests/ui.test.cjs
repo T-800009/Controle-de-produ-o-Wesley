@@ -1297,12 +1297,13 @@ test('SCRAP FORM: anexar o PDF devolvido confere as assinaturas, guarda a versã
  const ui=await mount(t,{url:'https://portal.test/?modulo=baixas&scrap='+form.id,respond:server.respond});
  await ui.settle(()=>document.querySelector('.scrap-dialog .scrap-slots'));
  assert.match(ui.container.querySelector('.scrap-row').textContent,/SCRAP-2026-0001.*Falta Produção, Qualidade, Logística, Financeiro/);
- // Primeiro o arquivo errado: o próprio PDF emitido, sem assinatura.
+ // Qualquer PDF entra: até o próprio PDF emitido, sem assinatura, pode ser salvo (sem erros na tela).
  const input=document.querySelector('.scrap-dialog input[aria-label="PDF assinado"]');
  await attach(input,generated,'mesmo.pdf');
  await ui.settle(()=>document.querySelector('.scrap-review'));
- assert.match(document.querySelector('.scrap-review').textContent,/ainda não tem nenhuma assinatura digital/);
- assert.equal([...document.querySelectorAll('.scrap-review button')].find(button=>/Salvar esta versão/.test(button.textContent)).disabled,true);
+ assert.match(document.querySelector('.scrap-review').textContent,/0 assinatura\(s\).*ainda falta/);
+ assert.equal(document.querySelector('.scrap-review .scrap-review-block, .scrap-review .scrap-review-warn'),null,'Nenhum erro nem aviso');
+ assert.equal([...document.querySelectorAll('.scrap-review button')].find(button=>/Salvar esta versão/.test(button.textContent)).disabled,false);
  await attach(input,scrapFixture('assinado-completo.pdf'),'assinado.pdf');
  await ui.settle(()=>/4 assinatura/.test(document.querySelector('.scrap-review')?.textContent||''));
  const review=document.querySelector('.scrap-review').textContent;
@@ -1314,7 +1315,7 @@ test('SCRAP FORM: anexar o PDF devolvido confere as assinaturas, guarda a versã
  const upload=server.state.posts.find(post=>post.action==='upload');
  assert.equal(upload.kind,'signed');assert.equal(upload.signatures.length,4);assert.ok(upload.signatures.every(entry=>entry.check==='valid'));
  assert.equal(document.querySelectorAll('.scrap-slot.signed').length,4);
- assert.match(document.querySelector('.scrap-message').textContent,/Todas as assinaturas conferidas/);
+ assert.match(document.querySelector('.scrap-message').textContent,/Todos os quadros assinados/);
  assert.match(document.querySelector('.scrap-send-preview').textContent,/Scrap Form SCRAP-2026-0001 assinado/);
  assert.match(ui.container.querySelector('.scrap-row').textContent,/Assinado.*Ainda não enviado/);
  await closeDialog(ui);
@@ -1460,47 +1461,47 @@ test('BAIXA EM CC: Importar Excel preenche todos os itens, aplica o centro de cu
  await attachSheet(input,x.write(wrong,{type:'buffer',bookType:'xlsx'}),'errada.xlsx');
  await ui.settle(()=>/coluna Material/.test(document.querySelector('.cc-dialog .scrap-message.error')?.textContent||''));
  assert.equal(document.querySelectorAll('.cc-dialog .scrap-item').length,1);
- await attachSheet(input,lossWorkbook(25),'LOSS 7000.xlsx');
- await ui.settle(()=>/25 itens importados de "LOSS 7000\.xlsx"/.test(document.querySelector('.cc-dialog .scrap-message.ok')?.textContent||''));
+ await attachSheet(input,lossWorkbook(45),'LOSS 7000.xlsx');
+ await ui.settle(()=>/45 itens importados de "LOSS 7000\.xlsx"/.test(document.querySelector('.cc-dialog .scrap-message.ok')?.textContent||''));
  const message=document.querySelector('.cc-dialog .scrap-message.ok').textContent;
  assert.match(message,/1 linha\(s\) sem material ou quantidade ficaram de fora/,'Linha de total da planilha');
- assert.match(message,/O PDF vai ter 2 páginas/);
+ assert.match(message,/O PDF vai ter 2 páginas, com as assinaturas no fim/);
  assert.equal(document.querySelector('.cc-dialog .scrap-item'),null,'Lista longa vira tabela compacta (o item vazio sai)');
  const rows=()=>[...document.querySelectorAll('.cc-dialog .cc-edit-table tbody tr')];
- assert.equal(rows().length,25);
+ assert.equal(rows().length,45);
  const cell=(row,label)=>rows()[row].querySelector(`input[aria-label="${label} do item ${row+1}"]`).value;
  assert.equal(cell(0,'Material'),'20000001-00');
  assert.equal(cell(0,'Quantidade'),'-1','Estoque livre vira saída');
  assert.equal(cell(0,'Custo unitário'),'10,50');
  assert.equal(cell(24,'Quantidade'),'-25');
  assert.equal(cell(24,'Centro de custo'),'BR000411');
- assert.match(document.querySelector('.cc-dialog [aria-label="Itens da baixa"] .scrap-section-head').textContent,/Itens \(25\).*-R\$\s3\.412,50/);
+ assert.match(document.querySelector('.cc-dialog [aria-label="Itens da baixa"] .scrap-section-head').textContent,/Itens \(45\).*-R\$\s10\.867,50/);
  assert.equal(document.querySelector('.cc-remarks input').value,'LOSS');
  assert.equal(document.querySelector('.cc-remarks .cc-main textarea').value,'Materials listed as LOSS in warehouse 7000.');
  // Centro de custo de todos de uma vez (a Action acompanha).
  const bulk=[...document.querySelectorAll('.cc-dialog .cc-bulk input')];
  await typeInto(bulk[0],'BR000999');await typeInto(bulk[1],'Perdas de inventario');
- await pressIn(ui,'.cc-dialog .cc-bulk button','Aplicar aos 25 itens');
+ await pressIn(ui,'.cc-dialog .cc-bulk button','Aplicar aos 45 itens');
  assert.equal(cell(13,'Centro de custo'),'BR000999');
  assert.equal(cell(13,'Descrição do centro de custo'),'Perdas de inventario');
  assert.match(document.querySelector('.cc-remarks .cc-action textarea').value,/through cost center BR000999 - Perdas de inventario\./);
  // Tirar uma linha e editar outra direto na tabela.
- await pressIn(ui,'.cc-dialog .cc-edit-table button[aria-label="Remover item 25"]');
- assert.equal(rows().length,24);
+ await pressIn(ui,'.cc-dialog .cc-edit-table button[aria-label="Remover item 45"]');
+ assert.equal(rows().length,44);
  await typeInto(rows()[0].querySelector('input[aria-label="Quantidade do item 1"]'),'-2');
  await pressIn(ui,'.cc-dialog button','Gerar PDF para assinatura');
  await ui.settle(()=>/CC-2026-0001 · Aguardando assinatura/.test(document.querySelector('.cc-dialog h2')?.textContent||''));
  const create=server.state.posts.find(post=>post.action==='create');
- assert.equal(create.data.items.length,24);
+ assert.equal(create.data.items.length,44);
  assert.equal(create.data.items[0].quantity,-2);
  assert.ok(create.data.items.every(item=>item.costCenter==='BR000999'&&item.quantity<0));
  const upload=server.state.posts.find(post=>post.action==='upload');
  const {PDFDocument}=require('pdf-lib');
  const doc=await PDFDocument.load(Buffer.from(upload.pdf,'base64'));
- assert.equal(doc.getPageCount(),2,'20 itens na 1ª página, 4 na continuação');
- assert.equal(doc.getPage(1).node.Annots()?.size()??0,0,'Assinaturas só na 1ª página');
+ assert.equal(doc.getPageCount(),2,'40 itens na 1ª página, 4 na 2ª com as assinaturas');
+ assert.deepEqual(doc.getPages().map(page=>page.node.Annots()?.size()??0),[0,4],'Assinaturas embaixo do último item');
  assert.ok(document.querySelector('.cc-dialog .cc-items-table'),'Emitido: tabela só para leitura');
- assert.equal(document.querySelectorAll('.cc-dialog .cc-items-table tbody tr').length,24);
+ assert.equal(document.querySelectorAll('.cc-dialog .cc-items-table tbody tr').length,44);
  await closeDialog(ui);
  ui.assertHealthy();
 });
@@ -1520,6 +1521,36 @@ test('BAIXA EM CC: Baixa pelo Excel na lista já abre a baixa preenchida, pronta
  await ui.settle(()=>/CC-2026-0001 · Aguardando assinatura/.test(document.querySelector('.cc-dialog h2')?.textContent||''));
  const create=server.state.posts.find(post=>post.action==='create');
  assert.equal(create.data.items.length,8);assert.equal(create.data.reason,'LOSS');
+ await closeDialog(ui);
+ ui.assertHealthy();
+});
+
+// MB51-70 · Anexar aceita qualquer PDF (de outro formulário, sem assinatura, outro número de páginas) sem erro na tela.
+test('BAIXA EM CC: anexar qualquer PDF não mostra erro e guarda a versão',async t=>{
+ const generated=ccFixture('gerado.pdf');
+ const form={id:'7a2c1b4d-0000-4000-8000-000000000004',number:'CC-2026-0004',status:'signing',data:ccData,signatures:[],fileVersion:1,
+  files:[{version:1,kind:'generated',name:'FO.FI.C.007 CC-2026-0004 Outubro-2026 - para assinatura.pdf',size:generated.length,sha256:sha256(generated),createdAt:'2026-10-07T09:25:00Z',createdBy:'admin',bytes:generated}],revision:2,createdAt:'2026-10-07T09:25:00Z',updatedAt:'2026-10-07T09:25:00Z',createdBy:'admin',signedAt:null,sentAt:null};
+ const server=scrapServer({cc:[form]});
+ const ui=await mount(t,{url:'https://portal.test/?modulo=baixas&cc='+form.id,respond:server.respond});
+ await ui.settle(()=>document.querySelector('.cc-dialog .scrap-slots'));
+ const input=document.querySelector('.cc-dialog input[aria-label="PDF assinado"]');
+ // PDF de outro formulário (Scrap Form), sem assinatura.
+ await attach(input,scrapFixture('gerado.pdf'),'FO.FI.C.007 CC-2026-0003 Outubro-2026 - UMA PAGINA FINAL.pdf');
+ await ui.settle(()=>/UMA PAGINA FINAL/.test(document.querySelector('.scrap-review')?.textContent||''));
+ // PDF qualquer, de duas páginas, sem nada do portal.
+ const {PDFDocument}=require('pdf-lib');const blank=await PDFDocument.create();blank.addPage();blank.addPage();
+ await attach(input,await blank.save(),'qualquer.pdf');
+ await ui.settle(()=>/qualquer\.pdf/.test(document.querySelector('.scrap-review')?.textContent||''));
+ const review=document.querySelector('.scrap-review');
+ assert.equal(review.querySelector('.scrap-review-block, .scrap-review-warn'),null,'Nenhum erro nem aviso');
+ assert.doesNotMatch(review.textContent,/não é do|página\(s\)|Assinem|nenhuma assinatura digital|cópia mais antiga/);
+ assert.match(review.textContent,/0 assinatura\(s\).*ainda falta: Pessoa Solicitante/);
+ await pressIn(ui,'.scrap-review button','Salvar esta versão');
+ await ui.settle(()=>/Versão 2 guardada/.test(document.querySelector('.cc-dialog .scrap-message')?.textContent||''));
+ const upload=server.state.posts.find(post=>post.action==='upload');
+ assert.equal(upload.kind,'signed');assert.deepEqual(upload.signatures,[]);assert.equal(upload.name,'qualquer.pdf');
+ assert.match(document.querySelector('.cc-dialog .scrap-history').textContent,/v2 · anexado · qualquer\.pdf/);
+ assert.equal(document.querySelector('.cc-dialog h2').textContent,'CC-2026-0004 · Aguardando assinatura');
  await closeDialog(ui);
  ui.assertHealthy();
 });

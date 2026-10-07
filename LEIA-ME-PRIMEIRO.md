@@ -10,6 +10,34 @@ O robô roda no Windows, com o SAP aberto e logado. Ele roda a MB51 (BR02, movim
 
 ---
 
+# MB51-70 — Anexar qualquer PDF e FO.FI.C.007 com as assinaturas no fim
+
+## Anexar PDF assinado aceita qualquer PDF
+
+Scrap Form e Baixa em CC: **Anexar PDF assinado → Salvar esta versão** guarda qualquer PDF como nova versão do formulário. Não há mais bloqueio nem aviso para:
+
+- PDF de outro formulário (outro número);
+- PDF sem nenhuma assinatura;
+- PDF com outro número de páginas ou outro conteúdo;
+- arquivo igual à versão anterior;
+- assinatura que não dá para conferir (arquivo regravado depois de assinado).
+
+**Vale o que está no arquivo anexado.** Quem assinou num quadro conta como assinado. Um PDF sem assinatura deixa o formulário em "Aguardando assinatura".
+
+O **Baixar PDF** e o **Ver PDF** usam sempre a última versão anexada. As anteriores ficam em **Histórico de PDFs**.
+
+O único limite que continua é o tamanho: até 1,5 MB por PDF.
+
+## FO.FI.C.007 com as assinaturas no fim
+
+- O número do formulário (Nº CC-…, em vermelho) saiu do cabeçalho. Ele continua no rodapé e no nome do arquivo.
+- **Até 20 itens:** tudo numa página, como antes.
+- **Mais de 20 itens:** são 40 itens por página. O TOTAL, o REMARKS e o quadro de aprovação (as quatro assinaturas) ficam embaixo do último item. Por exemplo, 57 itens dão 40 na página 1 e 17 na página 2, com as assinaturas na página 2.
+- Se a última página tiver mais de 24 itens, as assinaturas vão para uma página só delas, no fim.
+- Para um formulário que já foi emitido no formato antigo: **Reabrir para corrigir → Gerar PDF para assinatura**.
+
+---
+
 # MB51-69 — DOSSIÊ: cobrança de transferências ao Warehouse
 
 Nova aba **DOSSIÊ** (link direto `?modulo=dossie`). Para cada material transferido sem justificativa (por exemplo, 311 do 2000 para o 7000), o portal monta o dossiê com a prova da MB51 e acompanha a cobrança até o encerramento.

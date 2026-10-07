@@ -19,8 +19,24 @@ import {
   type ScrapForm,
 } from "./scrap-form.ts";
 
-/** Página 1 com 20 itens e o quadro de aprovação; o resto vai em páginas de continuação. */
+/** Até 20 itens: página única. Mais que isso: 40 itens por página e o quadro de aprovação no fim. */
 export const MAX_CC_ITEMS = 300;
+export const CC_SINGLE_PAGE_ROWS = 20;
+export const CC_PAGE_ROWS = 40;
+/** Itens que cabem na última página junto com REMARKS/APPROVAL. */
+export const CC_ROWS_WITH_APPROVAL = 24;
+/**
+ * Páginas do PDF: itens em blocos de 40; as assinaturas vão embaixo do último
+ * bloco quando ele tem até 24 itens, senão numa página só delas no fim.
+ */
+export function ccLayout(count: number) {
+  if (count <= CC_SINGLE_PAGE_ROWS) return { chunks: [count], approvalPage: 0, pages: 1 };
+  const chunks: number[] = [];
+  for (let left = count; left > 0; left -= CC_PAGE_ROWS) chunks.push(Math.min(CC_PAGE_ROWS, left));
+  const together = chunks[chunks.length - 1] <= CC_ROWS_WITH_APPROVAL;
+  const pages = chunks.length + (together ? 0 : 1);
+  return { chunks, approvalPage: pages - 1, pages };
+}
 export const CC_TITLE = "FO.FI.C.007 - INVENTORY ADJUSTMENT";
 
 export type CcItem = {

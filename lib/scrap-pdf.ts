@@ -16,7 +16,7 @@ import {
 } from "pdf-lib";
 import { checkCmsSignature, sha256Hex } from "./pdf-signature.ts";
 import { SCRAP_FORM_LOGO_JPEG } from "./scrap-logo.ts";
-import { CC_TITLE, MAX_CC_ITEMS, ccItemTotal, ccTotals, periodLabel, type CcFormData } from "./cc-form.ts";
+import { CC_SINGLE_PAGE_ROWS, CC_TITLE, MAX_CC_ITEMS, ccItemTotal, ccLayout, ccTotals, periodLabel, type CcFormData } from "./cc-form.ts";
 import {
   CAUSES,
   CC_SLOTS,
@@ -340,7 +340,7 @@ function finish(doc: PDFDocument, meta: { title: string; subject: string; keywor
   doc.setModificationDate(meta.generatedAt);
   const info = doc.context.lookup(doc.context.trailerInfo.Info, PDFDict);
   info.set(PDFName.of(FORM_KEY), PDFString.of(meta.number));
-  // Quadros de assinatura (página 1): um campo desenhado à parte só vale se estiver dentro de um deles.
+  // Quadros de assinatura ("@n" = página n+1): um campo desenhado à parte só vale se estiver dentro de um deles.
   info.set(PDFName.of(BOXES_KEY), PDFString.of(meta.boxes.join(";")));
   return doc.save({ useObjectStreams: false, updateFieldAppearances: false });
 }
@@ -379,10 +379,6 @@ const APPROVAL_COLUMNS = [
 /** Custo unitário com até 4 casas (média do SAP); o total da linha é o valor exato. */
 const unitMoney = (value: number | null) =>
   value === null ? "" : value.toLocaleString("pt-BR", { style: "currency", currency: "BRL", minimumFractionDigits: 2, maximumFractionDigits: 4 }).replace(/\u00a0/g, " ");
-/** Itens na página 1 (com o quadro de aprovação) e nas páginas de continuação. */
-export const CC_FIRST_PAGE_ROWS = 20;
-const CC_NEXT_PAGE_ROWS = 40;
-
 export async function buildCcPdf({ number, data, generatedAt = new Date() }: { number: string; data: CcFormData; generatedAt?: Date }): Promise<Uint8Array> {
   if (data.items.length > MAX_CC_ITEMS) throw Error(`Use no máximo ${MAX_CC_ITEMS} itens por formulário.`);
   const doc = await PDFDocument.create();
@@ -392,17 +388,19 @@ export async function buildCcPdf({ number, data, generatedAt = new Date() }: { n
   const logo = await doc.embedJpg(base64Bytes(SCRAP_FORM_LOGO_JPEG));
   const left = CC_PAGE.margin;
   const width = CC_PAGE.width - CC_PAGE.margin * 2;
-  const first = data.items.slice(0, CC_FIRST_PAGE_ROWS);
-  const rest: CcFormData["items"][] = [];
-  for (let i = CC_FIRST_PAGE_ROWS; i < data.items.length; i += CC_NEXT_PAGE_ROWS) rest.push(data.items.slice(i, i + CC_NEXT_PAGE_ROWS));
-  const totalPages = 1 + rest.length;
+  const count = data.items.length;
+  const layout = ccLayout(count);
   const totals = ccTotals(data);
   const stamp = generatedAt.toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
 
-  // Cabeçalho: logotipo | título | mês de referência.
+  // Cabeçalho: logotipo | título | mês de referência (o número do formulário fica no rodapé e no Info do PDF).
   const headerHeight = 46,
     logoWidth = 110,
-    periodWidth = 230;
+    periodWidth = 230,
+    tableHeaderHeight = 28,
+    totalHeight = 18,
+    band = 24,
+    subHeader = 26;
   const header = (page: PDFPage, subtitle = "") => {
     const y = CC_PAGE.height - CC_PAGE.margin - headerHeight;
     box(page, left, y, logoWidth, headerHeight);
@@ -411,15 +409,14 @@ export async function buildCcPdf({ number, data, generatedAt = new Date() }: { n
     cell(page, fonts, CC_TITLE, left + logoWidth, y + (subtitle ? 8 : 0), width - logoWidth - periodWidth, headerHeight - (subtitle ? 8 : 0), { bold: true, align: "center", size: 15, min: 11, lines: 1 });
     if (subtitle) cell(page, fonts, subtitle, left + logoWidth, y + 2, width - logoWidth - periodWidth, 14, { align: "center", size: 8, color: MUTED, lines: 1 });
     box(page, left + width - periodWidth, y, periodWidth, headerHeight);
-    cell(page, fonts, periodLabel(data.period), left + width - periodWidth, y + 12, periodWidth, headerHeight - 12, { bold: true, align: "center", size: 14, lines: 1 });
-    cell(page, fonts, `Nº ${number}`, left + width - periodWidth, y + 2, periodWidth, 14, { align: "center", size: 7.5, color: RED, lines: 1 });
+    cell(page, fonts, periodLabel(data.period), left + width - periodWidth, y, periodWidth, headerHeight, { bold: true, align: "center", size: 14, lines: 1 });
     return y;
   };
   const tableHeader = (page: PDFPage, y: number) => {
     let x = left;
     for (const column of CC_COLUMNS) {
-      box(page, x, y, column.width, 28, GRAY);
-      cell(page, fonts, column.label.join(" "), x, y, column.width, 28, { bold: true, align: "center", size: 7.5, min: 5.5 });
+      box(page, x, y, column.width, tableHeaderHeight, GRAY);
+      cell(page, fonts, column.label.join(" "), x, y, column.width, tableHeaderHeight, { bold: true, align: "center", size: 7.5, min: 5.5 });
       x += column.width;
     }
   };
@@ -448,98 +445,123 @@ export async function buildCcPdf({ number, data, generatedAt = new Date() }: { n
   };
   const totalRow = (page: PDFPage, y: number, label: string) => {
     const span = CC_COLUMNS.slice(0, 6).reduce((sum, column) => sum + column.width, 0);
-    box(page, left, y, span, 18);
-    cell(page, fonts, label, left, y, span, 18, { bold: true, align: "center", size: 8.5, lines: 1 });
+    box(page, left, y, span, totalHeight);
+    cell(page, fonts, label, left, y, span, totalHeight, { bold: true, align: "center", size: 8.5, lines: 1 });
     let x = left + span;
     CC_COLUMNS.slice(6).forEach((column) => {
-      box(page, x, y, column.width, 18);
-      if (column.key === "quantity") cell(page, fonts, quantity(totals.quantity), x, y, column.width, 18, { bold: true, align: "center", size: 8.5 });
-      if (column.key === "total") cell(page, fonts, money(totals.cost), x, y, column.width, 18, { bold: true, align: "right", size: 8.5 });
+      box(page, x, y, column.width, totalHeight);
+      if (column.key === "quantity") cell(page, fonts, quantity(totals.quantity), x, y, column.width, totalHeight, { bold: true, align: "center", size: 8.5 });
+      if (column.key === "total") cell(page, fonts, money(totals.cost), x, y, column.width, totalHeight, { bold: true, align: "right", size: 8.5 });
       x += column.width;
     });
   };
-  const footer = (page: PDFPage, y: number, pageNumber: number) => {
+  const footer = (page: PDFPage, y: number, pageNumber: number, signing: boolean) => {
     const origin = data.scrapForms.length ? ` · origem: ${data.scrapForms.join(", ")}` : "";
-    const note = pageNumber === 1 ? " · cada responsável assina com o ID digital clicando no campo do seu quadro" : "";
+    const note = signing ? " · cada responsável assina com o ID digital clicando no campo do seu quadro" : "";
     page.drawText(fonts.clean(`${number} · gerado no Controle de Produção WBYD em ${stamp}${pageNumber === 1 ? origin : ""}${note}`.slice(0, 260)), { x: left, y, size: 6.5, font: regular, color: MUTED });
-    const label = `Página ${pageNumber}/${totalPages}`;
+    const label = `Página ${pageNumber}/${layout.pages}`;
     page.drawText(label, { x: left + width - regular.widthOfTextAtSize(label, 6.5), y, size: 6.5, font: regular, color: MUTED });
   };
-
-  // Página 1: primeiros itens, TOTAL de todos, REMARKS e APPROVAL.
-  const page = doc.addPage([CC_PAGE.width, CC_PAGE.height]);
-  let y = header(page) - 8;
-  const band = 24,
-    subHeader = 26,
-    footerSpace = 16;
-  const rows = Math.max(10, first.length);
-  const fixed = headerHeight + 8 + 28 + 18 + 10 + band + subHeader + footerSpace;
-  const space = CC_PAGE.height - CC_PAGE.margin * 2 - fixed;
-  const rowHeight = Math.max(15, Math.min(22, Math.floor((space - 4 * 60) / rows)));
-  const approvalHeight = Math.max(60, Math.min(92, Math.floor((space - rowHeight * rows) / 4)));
-  y -= 28;
-  tableHeader(page, y);
-  for (let index = 0; index < rows; index++) {
-    y -= rowHeight;
-    itemRow(page, y, rowHeight, first[index], index);
-  }
-  y -= 18;
-  totalRow(page, y, rest.length ? `TOTAL (${data.items.length} itens · continua na página 2)` : "TOTAL");
-
-  // REMARKS (motivo) | APPROVAL (assinaturas obrigatórias).
-  y -= 10 + band;
-  const remarksWidth = REMARK_COLUMNS.reduce((sum, column) => sum + column.width, 0);
-  box(page, left, y, remarksWidth, band, GRAY);
-  cell(page, fonts, "REMARKS:", left, y, remarksWidth, band, { bold: true, size: 9, lines: 1 });
-  box(page, left + remarksWidth, y, width - remarksWidth, band, GRAY);
-  cell(page, fonts, "APPROVAL :", left + remarksWidth, y, 110, band, { bold: true, size: 9, lines: 1 });
-  cell(page, fonts, "Obs: Mandatory signatures", left + remarksWidth + 110, y, 260, band, { bold: true, size: 9, lines: 1 });
-  y -= subHeader;
-  let x = left;
-  for (const column of [...REMARK_COLUMNS, ...APPROVAL_COLUMNS]) {
-    box(page, x, y, column.width, subHeader, GRAY);
-    cell(page, fonts, column.label, x, y, column.width, subHeader, { bold: true, align: column.key === "action" || column.key === "responsible" ? "left" : "center", size: 7.5, lines: 1 });
-    x += column.width;
-  }
-  const blockTop = y;
-  const blockHeight = approvalHeight * 4;
-  x = left;
-  for (const column of REMARK_COLUMNS) {
-    box(page, x, blockTop - blockHeight, column.width, blockHeight);
-    cell(page, fonts, data[column.key], x, blockTop - blockHeight, column.width, blockHeight, { align: "center", size: 10, min: 6.5, lines: 18 });
-    x += column.width;
-  }
+  // REMARKS (motivo) | APPROVAL (assinaturas obrigatórias), a partir de y (topo do quadro). Devolve o fim.
   const boxes: string[] = [];
-  CC_SLOTS.forEach((slot, index) => {
-    const rowY = blockTop - approvalHeight * (index + 1);
-    let columnX = left + remarksWidth;
-    for (const column of APPROVAL_COLUMNS) {
-      box(page, columnX, rowY, column.width, approvalHeight);
-      if (column.key === "responsible") cell(page, fonts, `${slot.order} . ${slot.role}`, columnX, rowY, column.width, approvalHeight, { size: 8, lines: 2 });
-      if (column.key === "name") cell(page, fonts, data.approvers[slot.id], columnX, rowY, column.width, approvalHeight, { align: "center", size: 8.5, lines: 2 });
-      if (column.key === "signature") boxes.push(signatureField(doc, page, slot, data.approvers[slot.id], [columnX + 2, rowY + 2, columnX + column.width - 2, rowY + approvalHeight - 2]));
-      if (column.key === "date") cell(page, fonts, "_____/_____/__________", columnX, rowY, column.width, approvalHeight, { align: "center", size: 8, color: MUTED, lines: 1 });
-      columnX += column.width;
+  const approval = (page: PDFPage, pageIndex: number, top: number, approvalHeight: number) => {
+    let y = top - band;
+    const remarksWidth = REMARK_COLUMNS.reduce((sum, column) => sum + column.width, 0);
+    box(page, left, y, remarksWidth, band, GRAY);
+    cell(page, fonts, "REMARKS:", left, y, remarksWidth, band, { bold: true, size: 9, lines: 1 });
+    box(page, left + remarksWidth, y, width - remarksWidth, band, GRAY);
+    cell(page, fonts, "APPROVAL :", left + remarksWidth, y, 110, band, { bold: true, size: 9, lines: 1 });
+    cell(page, fonts, "Obs: Mandatory signatures", left + remarksWidth + 110, y, 260, band, { bold: true, size: 9, lines: 1 });
+    y -= subHeader;
+    let x = left;
+    for (const column of [...REMARK_COLUMNS, ...APPROVAL_COLUMNS]) {
+      box(page, x, y, column.width, subHeader, GRAY);
+      cell(page, fonts, column.label, x, y, column.width, subHeader, { bold: true, align: column.key === "action" || column.key === "responsible" ? "left" : "center", size: 7.5, lines: 1 });
+      x += column.width;
     }
-  });
-  footer(page, blockTop - blockHeight - 12, 1);
+    const blockTop = y;
+    const blockHeight = approvalHeight * 4;
+    x = left;
+    for (const column of REMARK_COLUMNS) {
+      box(page, x, blockTop - blockHeight, column.width, blockHeight);
+      cell(page, fonts, data[column.key], x, blockTop - blockHeight, column.width, blockHeight, { align: "center", size: 10, min: 6.5, lines: 18 });
+      x += column.width;
+    }
+    CC_SLOTS.forEach((slot, index) => {
+      const rowY = blockTop - approvalHeight * (index + 1);
+      let columnX = left + remarksWidth;
+      for (const column of APPROVAL_COLUMNS) {
+        box(page, columnX, rowY, column.width, approvalHeight);
+        if (column.key === "responsible") cell(page, fonts, `${slot.order} . ${slot.role}`, columnX, rowY, column.width, approvalHeight, { size: 8, lines: 2 });
+        if (column.key === "name") cell(page, fonts, data.approvers[slot.id], columnX, rowY, column.width, approvalHeight, { align: "center", size: 8.5, lines: 2 });
+        if (column.key === "signature") {
+          const field = signatureField(doc, page, slot, data.approvers[slot.id], [columnX + 2, rowY + 2, columnX + column.width - 2, rowY + approvalHeight - 2]);
+          boxes.push(pageIndex ? `${field}@${pageIndex}` : field);
+        }
+        if (column.key === "date") cell(page, fonts, "_____/_____/__________", columnX, rowY, column.width, approvalHeight, { align: "center", size: 8, color: MUTED, lines: 1 });
+        columnX += column.width;
+      }
+    });
+    return blockTop - blockHeight;
+  };
+  const approvalSpace = band + subHeader;
 
-  // Continuação: os demais itens, com o TOTAL no fim.
-  rest.forEach((chunk, index) => {
-    const extra = doc.addPage([CC_PAGE.width, CC_PAGE.height]);
-    const start = CC_FIRST_PAGE_ROWS + index * CC_NEXT_PAGE_ROWS;
-    let yy = header(extra, `Continuação · itens ${start + 1} a ${start + chunk.length} de ${data.items.length}`) - 8 - 28;
-    tableHeader(extra, yy);
-    for (let row = 0; row < chunk.length; row++) {
-      yy -= 16;
-      itemRow(extra, yy, 16, chunk[row], start + row);
+  if (count <= CC_SINGLE_PAGE_ROWS) {
+    // Página única: tabela com pelo menos 10 linhas e o quadro de aprovação logo abaixo.
+    const page = doc.addPage([CC_PAGE.width, CC_PAGE.height]);
+    let y = header(page) - 8;
+    const rows = Math.max(10, count);
+    const fixed = headerHeight + 8 + tableHeaderHeight + totalHeight + 10 + approvalSpace + 16;
+    const space = CC_PAGE.height - CC_PAGE.margin * 2 - fixed;
+    const rowHeight = Math.max(15, Math.min(22, Math.floor((space - 4 * 60) / rows)));
+    const approvalHeight = Math.max(60, Math.min(92, Math.floor((space - rowHeight * rows) / 4)));
+    y -= tableHeaderHeight;
+    tableHeader(page, y);
+    for (let index = 0; index < rows; index++) {
+      y -= rowHeight;
+      itemRow(page, y, rowHeight, data.items[index], index);
     }
-    if (index === rest.length - 1) {
-      yy -= 18;
-      totalRow(extra, yy, `TOTAL (${data.items.length} itens)`);
+    y -= totalHeight;
+    totalRow(page, y, "TOTAL");
+    footer(page, approval(page, 0, y - 10, approvalHeight) - 12, 1, true);
+  } else {
+    // Várias páginas: 40 itens por página; TOTAL e assinaturas depois do último item.
+    const rowHeight = 16;
+    let start = 0;
+    layout.chunks.forEach((size, index) => {
+      const page = doc.addPage([CC_PAGE.width, CC_PAGE.height]);
+      const last = index === layout.chunks.length - 1;
+      const range = `itens ${start + 1} a ${start + size} de ${count}`;
+      const subtitle = layout.pages === 1 ? "" : index === 0 ? range.replace(/^i/, "I") : `Continuação · ${range}`;
+      let y = header(page, subtitle) - 8 - tableHeaderHeight;
+      tableHeader(page, y);
+      for (let row = 0; row < size; row++) {
+        y -= rowHeight;
+        itemRow(page, y, rowHeight, data.items[start + row], start + row);
+      }
+      start += size;
+      const signing = layout.approvalPage === index;
+      if (last) {
+        y -= totalHeight;
+        totalRow(page, y, `TOTAL (${count} itens)`);
+      } else {
+        const next = `Continua na página ${index + 2}`;
+        page.drawText(next, { x: left + width - regular.widthOfTextAtSize(next, 8), y: y - 12, size: 8, font: regular, color: MUTED });
+      }
+      if (signing) {
+        const room = y - 10 - approvalSpace - (CC_PAGE.margin + 4);
+        approval(page, index, y - 10, Math.max(60, Math.min(80, Math.floor(room / 4))));
+      }
+      footer(page, CC_PAGE.margin - 8, index + 1, signing);
+    });
+    if (layout.approvalPage === layout.chunks.length) {
+      // Último bloco cheio: as assinaturas ganham uma página só delas.
+      const page = doc.addPage([CC_PAGE.width, CC_PAGE.height]);
+      const top = header(page, `Aprovação · ${count} itens nas páginas anteriores · total ${money(totals.cost)}`) - 8;
+      approval(page, layout.approvalPage, top, 80);
+      footer(page, CC_PAGE.margin - 8, layout.pages, true);
     }
-    footer(extra, CC_PAGE.margin - 8, index + 2);
-  });
+  }
   return finish(doc, { title: `${CC_TITLE} ${number}`, subject: "Baixa / ajuste de estoque em centro de custo", keyword: "FO.FI.C.007", number, generatedAt, boxes });
 }
 
@@ -571,21 +593,23 @@ export function pdfDate(raw: string): string | null {
   return Number.isNaN(time) ? null : new Date(time).toISOString();
 }
 
-type Box = { slot: SlotId; x1: number; y1: number; x2: number; y2: number };
+/** page: índice da página do quadro (0 quando o Info não diz — PDFs antigos têm tudo na página 1). */
+type Box = { slot: SlotId; x1: number; y1: number; x2: number; y2: number; page: number };
 function parseBoxes(raw: string): Box[] {
   return raw
     .split(";")
     .map((part) => {
-      const [slot, numbers = ""] = part.split(":");
+      const [slot, rest = ""] = part.split(":");
+      const [numbers, pageText] = rest.split("@");
       const [x1, y1, x2, y2] = numbers.split(",").map(Number);
-      return isSlotId(slot) && [x1, y1, x2, y2].every(Number.isFinite) ? { slot, x1, y1, x2, y2 } : null;
+      const page = pageText === undefined ? 0 : Number(pageText);
+      return isSlotId(slot) && [x1, y1, x2, y2].every(Number.isFinite) && Number.isInteger(page) && page >= 0 ? { slot, x1, y1, x2, y2, page } : null;
     })
     .filter((box): box is Box => !!box);
 }
-/** Campo criado à parte no Adobe ("Signature2"): vale o quadro onde ele foi desenhado (página 1). */
+/** Campo criado à parte no Adobe ("Signature2"): vale o quadro onde ele foi desenhado (na página do quadro). */
 export function slotFromPosition(center: { x: number; y: number; page: number }, boxes: Box[]): SlotId | null {
-  if (center.page !== 0) return null;
-  return boxes.find((box) => center.x >= box.x1 && center.x <= box.x2 && center.y >= box.y1 && center.y <= box.y2)?.slot || null;
+  return boxes.find((box) => center.page === box.page && center.x >= box.x1 && center.x <= box.x2 && center.y >= box.y1 && center.y <= box.y2)?.slot || null;
 }
 
 const SCRAP_ORDER: SlotId[] = ["production", "quality", "logistics", "finance"];
@@ -712,7 +736,7 @@ function gapMatches(bytes: Uint8Array, b: number, c: number, contents: Uint8Arra
  */
 export async function readScrapPdf(bytes: Uint8Array, { maxBytes = MAX_PDF_BYTES, legacy = false, kind }: { maxBytes?: number; legacy?: boolean; kind?: DocKind } = {}): Promise<ScrapPdfReading> {
   if (bytes.length > 30_000_000) throw Error("O PDF passa de 30 MB.");
-  if (bytes.length > maxBytes) throw Error("O PDF passa de 1,5 MB. O formulário gerado pelo portal fica bem abaixo disso: confira se é o arquivo certo (não regrave o PDF assinado em outro programa, isso invalida as assinaturas).");
+  if (bytes.length > maxBytes) throw Error("O PDF passa de 1,5 MB, o limite do portal.");
   const head = new TextDecoder("latin1").decode(bytes.subarray(0, 1024));
   if (!head.includes("%PDF-")) throw Error("Este arquivo não é um PDF.");
   let doc: PDFDocument;

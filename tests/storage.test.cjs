@@ -276,11 +276,9 @@ console.log('Observações Ana: compartilhamento, isolamento OP/material, perfil
  assert.equal((await call(`/api/scrap-forms?file=${form.id}&version=9`,{headers})).status,404);
  const sig=(slot,field,signer)=>({field,slot,signer,signedAt:'2026-09-25T10:00:00Z',check:'valid',coversWholeFile:false,detail:'ok'});
  const part=[sig('production','Assinatura_Producao','André Ribeiro'),{...sig('quality','Assinatura_Qualidade','Marcus Gallo'),coversWholeFile:true}];
- assert.equal((await upload({kind:'signed',pdf:b64(generated),signatures:part})).status,409,'Mesmo arquivo da versão atual');
  // PDF maior que uma parte (90 mil caracteres base64): gravado em pedaços e lido inteiro.
  const big=Buffer.concat([Buffer.from(generated),Buffer.from('\n%'+'x'.repeat(300000)+'\n%/ByteRange\n%/ByteRange\n')]);
  assert.equal((await upload({kind:'signed',pdf:b64(Buffer.concat([Buffer.from(generated),Buffer.from('\n%x\n')])),signatures:part})).status,400,'Sem /ByteRange no arquivo');
- assert.equal((await upload({kind:'signed',pdf:b64(big),signatures:[]})).status,400,'Sem assinatura');
  assert.equal((await upload({kind:'signed',pdf:b64(Buffer.concat([big,Buffer.alloc(2_300_000,32)])),signatures:part})).status,413);
  assert.equal((await upload({kind:'signed',pdf:b64(big),signatures:[{check:'aprovado'}]})).status,400);
  form=(await (await upload({kind:'signed',pdf:b64(big),signatures:part})).json()).form;
@@ -375,6 +373,28 @@ console.log('Observações Ana: compartilhamento, isolamento OP/material, perfil
   assert.equal((await cc({action:'delete',id:bigReopened.id,revision:bigReopened.revision},adminJson,environment)).status,200);
   console.log(`FO.FI.C.007 com 300 itens: PDF de ${Math.round(bigPdf.length/1024)} KB guardado e lido de volta.`);
  }
+ // MB51-70 · Anexar aceita qualquer PDF: de outro formulário, sem assinatura, igual ao anterior; vale o que está no arquivo.
+ {
+  let anyForm=(await (await cc({action:'create',data:{...ccData,scrapForms:[]}})).json()).form;
+  anyForm=(await (await cc({action:'upload',id:anyForm.id,revision:anyForm.revision,name:'emitido.pdf',kind:'generated',pdf:b64(await buildCcPdf({number:anyForm.number,data:anyForm.data}))})).json()).form;
+  const attachAny=(pdf,signatures)=>cc({action:'upload',id:anyForm.id,revision:anyForm.revision,name:'qualquer.pdf',kind:'signed',pdf:b64(pdf),signatures});
+  const otherPdf=await buildCcPdf({number:'CC-2099-0001',data:{...anyForm.data,items:[ccItem,ccItem]}});
+  let response=await attachAny(otherPdf,[]);
+  assert.equal(response.status,200,'PDF de outro formulário, sem assinatura, entra');
+  anyForm=(await response.json()).form;
+  assert.equal(anyForm.status,'signing');assert.equal(anyForm.fileVersion,2);assert.deepEqual(anyForm.signatures,[]);assert.equal(anyForm.files[1].kind,'signed');
+  response=await attachAny(otherPdf,[]);
+  assert.equal(response.status,200,'Igual à versão anterior também entra');
+  anyForm=(await response.json()).form;assert.equal(anyForm.fileVersion,3);
+  // Assinaturas que não dá para conferir (arquivo regravado) contam: fica assinado.
+  const fields=['Assinatura_Solicitante','Assinatura_Gestor','Assinatura_SCM','Assinatura_Financeiro'];
+  const regravado=['requester','manager','scm','finance'].map((slot,index)=>({...sig(slot,fields[index],'Pessoa '+index),check:'imported'}));
+  anyForm=(await (await attachAny(otherPdf,regravado)).json()).form;
+  assert.equal(anyForm.status,'signed');assert.ok(anyForm.signedAt);assert.equal(anyForm.files.length,4);
+  const reopenedAny=(await (await cc({action:'reopen',id:anyForm.id,revision:anyForm.revision},adminJson,environment)).json()).form;
+  assert.equal((await cc({action:'delete',id:reopenedAny.id,revision:reopenedAny.revision},adminJson,environment)).status,200);
+  console.log('Anexar qualquer PDF: outro formulário, sem assinatura, repetido e regravado passaram.');
+ }
  // MB51-65 · Formulários que já existiam (Excel → PDF assinado): número do portal, PDF original guardado, transcrição corrigível.
  {
   const legacy=fs.readFileSync(path.join(root,'tests/fixtures/legado/legado-scrap-assinado.pdf'));
@@ -403,8 +423,6 @@ console.log('Observações Ana: compartilhamento, isolamento OP/material, perfil
   assert.equal(imported.status,'signed','Classe C: o Financeiro deixa de ser exigido');assert.ok(imported.signedAt);assert.equal(imported.signatures.length,3);
   imported=(await (await scrap({action:'update',id:imported.id,revision:imported.revision,data:legacyData})).json()).form;
   assert.equal(imported.status,'signing');assert.equal(imported.signedAt,null);
-  // Assinatura "importada" que não veio na importação é recusada.
-  assert.equal((await scrap({action:'upload',id:imported.id,revision:imported.revision,kind:'signed',name:'x.pdf',pdf:b64(fs.readFileSync(path.join(root,'tests/fixtures/legado/legado-scrap-completo.pdf'))),signatures:[...imported.signatures,{...sig('finance','Assinatura_Financeiro','Pessoa Financeiro'),check:'imported'}]})).status,400);
   // O PDF devolvido com a assinatura do Financeiro entra como nova versão.
   const complete=fs.readFileSync(path.join(root,'tests/fixtures/legado/legado-scrap-completo.pdf'));
   imported=(await (await scrap({action:'upload',id:imported.id,revision:imported.revision,kind:'signed',name:'completo.pdf',pdf:b64(complete),signatures:[...imported.signatures.map(entry=>({...entry,coversWholeFile:false})),{...sig('finance','Assinatura_Financeiro','Pessoa Financeiro'),coversWholeFile:true}]})).json()).form;
