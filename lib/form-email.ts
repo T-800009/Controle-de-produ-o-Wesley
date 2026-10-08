@@ -14,13 +14,16 @@ import { bytesToBase64 as base64 } from "./base64.ts";
 export type EmailOptions = { sender?: string; link?: string; now?: Date };
 export type FormEmail = { subject: string; text: string; html: string; short: string };
 
-type Block =
+export type Block =
   | { type: "p"; text: string }
   | { type: "facts"; title: string; rows: [string, string][] }
-  | { type: "table"; title: string; head: string[]; right: number[]; rows: string[][]; more: string }
+  // prefix: rótulo de cada coluna no texto simples ("enviar ", "saldo 2000: "…), onde não há cabeçalho
+  | { type: "table"; title: string; head: string[]; right: number[]; rows: string[][]; more: string; nowrap?: number[]; prefix?: string[] }
   | { type: "list"; title: string; items: string[] }
   | { type: "steps"; title: string; items: string[] }
   | { type: "link"; text: string; href: string }
+  // Imagem no corpo (gráfico): no .eml o src é "cid:…" e a imagem vai junto; na prévia, um data: URL.
+  | { type: "image"; title: string; heading?: boolean; src: string; alt: string; width: number; height: number; note?: string }
   | { type: "closing"; sender: string };
 
 /** Até quantos itens vão listados no e-mail (o resto está no PDF). */
@@ -194,16 +197,17 @@ function blocksOf(kind: DocKind, form: ScrapForm | CcForm, options: EmailOptions
 /* ------------------------------------------------------------------------ */
 
 const plain = (text: string) => text.replace(/\*\*(.+?)\*\*/g, "$1");
-function renderText(blocks: Block[]) {
+export function renderText(blocks: Block[]) {
   const out: string[] = [];
   for (const block of blocks) {
     if (block.type === "p") out.push(plain(block.text));
     else if (block.type === "facts") out.push([`${block.title}:`, ...block.rows.map(([label, value]) => `• ${label}: ${value}`)].join("\n"));
     else if (block.type === "table")
-      out.push([`${block.title}:`, ...block.rows.map((row) => `• ${row.join(" · ")}`), ...(block.more ? [block.more] : [])].join("\n"));
+      out.push([`${block.title}:`, ...block.rows.map((row) => `• ${row.map((value, index) => `${block.prefix?.[index] || ""}${value}`).join(" · ")}`), ...(block.more ? [block.more] : [])].join("\n"));
     else if (block.type === "list") out.push([`${block.title}:`, ...block.items.map((item) => `• ${item}`)].join("\n"));
     else if (block.type === "steps") out.push([`${block.title}:`, ...block.items.map((item, index) => `${index + 1}. ${item}`)].join("\n"));
     else if (block.type === "link") out.push(`${block.text}\n${block.href}`);
+    else if (block.type === "image") out.push(`${block.title}: veja o gráfico no corpo do e-mail.`);
     else out.push(["Atenciosamente,", ...(block.sender ? [block.sender] : [])].join("\n"));
   }
   return out.join("\n\n");
@@ -216,7 +220,7 @@ const FONT = "font-family:Calibri,'Segoe UI',Arial,sans-serif";
 const P = "margin:0 0 12px";
 const TITLE = "margin:18px 0 6px;font-weight:bold;color:#1f1f1f";
 const CELL = "border:1px solid #d4d4d4;padding:4px 8px;vertical-align:top";
-function renderHtml(blocks: Block[]) {
+export function renderHtml(blocks: Block[]) {
   const out: string[] = [];
   for (const block of blocks) {
     if (block.type === "p") out.push(`<p style="${P}">${rich(block.text)}</p>`);
@@ -237,7 +241,7 @@ function renderHtml(blocks: Block[]) {
         `<p style="${TITLE}">${esc(block.title)}</p>`,
         `<table cellpadding="0" cellspacing="0" style="border-collapse:collapse;margin:0 0 6px;font-size:10pt">` +
           `<tr>${block.head.map((label, index) => `<th style="${CELL};background:#f2f2f2;text-align:${align(index)};white-space:nowrap">${esc(label)}</th>`).join("")}</tr>` +
-          block.rows.map((row) => `<tr>${row.map((value, index) => `<td style="${CELL};text-align:${align(index)}${block.right.includes(index) ? ";white-space:nowrap" : ""}">${esc(value)}</td>`).join("")}</tr>`).join("") +
+          block.rows.map((row) => `<tr>${row.map((value, index) => `<td style="${CELL};text-align:${align(index)}${block.right.includes(index) || block.nowrap?.includes(index) ? ";white-space:nowrap" : ""}">${esc(value)}</td>`).join("")}</tr>`).join("") +
           `</table>`,
       );
       if (block.more) out.push(`<p style="margin:0 0 12px;font-size:10pt;color:#595959">${esc(block.more)}</p>`);
@@ -246,6 +250,13 @@ function renderHtml(blocks: Block[]) {
     else if (block.type === "steps")
       out.push(`<p style="${TITLE}">${esc(block.title)}</p>`, `<ol style="margin:0 0 12px 22px;padding:0">${block.items.map((item) => `<li style="margin:0 0 3px">${esc(item)}</li>`).join("")}</ol>`);
     else if (block.type === "link") out.push(`<p style="${P};font-size:10pt;color:#595959">${esc(block.text)} <a href="${esc(block.href)}">${esc(block.href)}</a></p>`);
+    else if (block.type === "image")
+      out.push(
+        block.heading === false ? "" : `<p style="${TITLE}">${esc(block.title)}</p>`,
+        // width/height fixos: o Outlook respeita os atributos (o PNG tem o dobro, para ficar nítido).
+        `<p style="margin:${block.heading === false ? "14px" : "0"} 0 4px"><img src="${esc(block.src)}" width="${block.width}" height="${block.height}" alt="${esc(block.alt)}" style="display:block;width:${block.width}px;max-width:100%;height:auto;border:1px solid #e3e3e3"></p>`,
+        block.note ? `<p style="margin:0 0 12px;font-size:9pt;color:#595959">${esc(block.note)}</p>` : "",
+      );
     else out.push(`<p style="margin:18px 0 0">Atenciosamente,${block.sender ? `<br><b>${esc(block.sender)}</b>` : ""}</p>`);
   }
   return `<div style="${FONT};font-size:11pt;color:#1f1f1f;line-height:1.45">${out.join("")}</div>`;
@@ -284,14 +295,41 @@ const addresses = (value: string) =>
     .map((entry) => entry.trim())
     .filter((entry) => /^[^@\s<>"]+@[^@\s<>"]+$/.test(entry));
 
-export function buildEml({ to, subject, text, html, attachment }: { to: string; subject: string; text: string; html: string; attachment?: { name: string; bytes: Uint8Array } }) {
+export type EmlFile = { name: string; bytes: Uint8Array; type?: string };
+/** Imagem mostrada no corpo: o HTML usa src="cid:<cid>". */
+export type EmlImage = { cid: string; name: string; bytes: Uint8Array; type: string };
+export function buildEml({
+  to,
+  cc = "",
+  subject,
+  text,
+  html,
+  attachment,
+  attachments = [],
+  images = [],
+}: {
+  to: string;
+  cc?: string;
+  subject: string;
+  text: string;
+  html: string;
+  attachment?: { name: string; bytes: Uint8Array };
+  attachments?: EmlFile[];
+  images?: EmlImage[];
+}) {
   const mixed = "----=_WBYD_mixed",
+    related = "----=_WBYD_related",
     alternative = "----=_WBYD_alt";
   const lines: string[] = ["X-Unsent: 1"];
   const recipients = addresses(to);
   if (recipients.length) lines.push(`To: ${recipients.join(", ")}`);
+  const copies = addresses(cc);
+  if (copies.length) lines.push(`Cc: ${copies.join(", ")}`);
   lines.push(`Subject: ${encodeHeader(subject)}`, "MIME-Version: 1.0", `Content-Type: multipart/mixed; boundary="${mixed}"`, "", "This is a multi-part message in MIME format.", "");
-  lines.push(`--${mixed}`, `Content-Type: multipart/alternative; boundary="${alternative}"`, "");
+  lines.push(`--${mixed}`);
+  // Com imagens no corpo: texto/HTML e imagens ficam juntos (multipart/related), como o Outlook espera.
+  if (images.length) lines.push(`Content-Type: multipart/related; type="multipart/alternative"; boundary="${related}"`, "", `--${related}`);
+  lines.push(`Content-Type: multipart/alternative; boundary="${alternative}"`, "");
   lines.push(`--${alternative}`, 'Content-Type: text/plain; charset="utf-8"', "Content-Transfer-Encoding: base64", "", wrap(base64(utf8(text))));
   lines.push(
     `--${alternative}`,
@@ -301,15 +339,29 @@ export function buildEml({ to, subject, text, html, attachment }: { to: string; 
     wrap(base64(utf8(`<!DOCTYPE html><html><head><meta charset="utf-8"></head><body>${html}</body></html>`))),
   );
   lines.push(`--${alternative}--`, "");
-  if (attachment) {
-    const name = encodeHeader(attachment.name).replace(/\r\n /g, " ");
+  const fileName = (name: string) => encodeHeader(name).replace(/\r\n /g, " ");
+  for (const image of images) {
+    const name = fileName(image.name);
+    lines.push(
+      `--${related}`,
+      `Content-Type: ${image.type}; name="${name}"`,
+      "Content-Transfer-Encoding: base64",
+      `Content-ID: <${image.cid}>`,
+      `Content-Disposition: inline; filename="${name}"`,
+      "",
+      wrap(base64(image.bytes)),
+    );
+  }
+  if (images.length) lines.push(`--${related}--`, "");
+  for (const file of [...(attachment ? [{ ...attachment, type: "application/pdf" }] : []), ...attachments]) {
+    const name = fileName(file.name);
     lines.push(
       `--${mixed}`,
-      `Content-Type: application/pdf; name="${name}"`,
+      `Content-Type: ${file.type || "application/octet-stream"}; name="${name}"`,
       "Content-Transfer-Encoding: base64",
       `Content-Disposition: attachment; filename="${name}"`,
       "",
-      wrap(base64(attachment.bytes)),
+      wrap(base64(file.bytes)),
     );
   }
   lines.push(`--${mixed}--`, "");

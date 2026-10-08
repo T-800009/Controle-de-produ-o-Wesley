@@ -72,3 +72,39 @@ export function warehouseExportRows(items:WarehouseItem[],statuses:OpStatuses){
    'Quantidade a conferir/apontar SAP':row.pending,'Status da OP':OP_STATUS_LABELS[statuses[String(row.op)]?.status||'not_started']})))
  };
 }
+
+const readAt=(value?:string)=>value&&Number.isFinite(Date.parse(value))?new Date(value).toLocaleString('pt-BR'):'Sem leitura confirmada';
+type Source={source?:string;updatedAt?:string}|null|undefined;
+type XlsxModule=typeof import('xlsx');
+/** Planilha do Warehouse (Total_por_Item, Falta_por_OP e Criterios): a mesma do botão
+ * "Baixar planilha para o Lougas" e do anexo do e-mail do GRÁFICO. */
+export function warehouseWorkbook(x:XlsxModule,{items,statuses,report,bom,stocks,filter,query='',classLabel,version,title='Resumo para o Warehouse / Lougas'}:{
+ items:WarehouseItem[];statuses:OpStatuses;report:{closedOps:number;checkedItems:number;reviewItems:number};
+ bom:{name:string;revision:string;source?:string;updatedAt?:string};stocks:Source[];filter:string;query?:string;classLabel:string;version:string;title?:string;
+}){
+ const book=x.utils.book_new(),output=warehouseExportRows(items,statuses);
+ const totals=x.utils.json_to_sheet(output.totals),detail=x.utils.json_to_sheet(output.details);
+ totals['!cols']=[18,42,8,10,22,16,18,25,16,24,25,22,55,45].map(wch=>({wch}));
+ detail['!cols']=[20,18,42,10,9,16,19,19,20,30,28].map(wch=>({wch}));
+ for(const sheet of [totals,detail])if(sheet['!ref'])sheet['!autofilter']={ref:sheet['!ref']};
+ x.utils.book_append_sheet(book,totals,'Total_por_Item');
+ x.utils.book_append_sheet(book,detail,'Falta_por_OP');
+ const criteria=x.utils.aoa_to_sheet([
+  [title,version],['BOM ativa',bom.name+' · '+bom.revision],['Gerado em',new Date().toLocaleString('pt-BR')],
+  ['MB51',bom.source||'',readAt(bom.updatedAt)],['7000',stocks[0]?.source||'Indisponível',readAt(stocks[0]?.updatedAt)],
+  ['2000',stocks[1]?.source||'Indisponível',readAt(stocks[1]?.updatedAt)],['1500 (referência)',stocks[2]?.source||'Indisponível',readAt(stocks[2]?.updatedAt)],
+  ['Escopo','Todas as OPs da BOM ativa. Não inclui outras revisões.'],
+  ['Consolidação','Material + unidade; saldos contados uma única vez para o total das OPs abertas.'],
+  ['Falta SAP','BOM − consumo efetivo MB51/SCRAP, mínimo zero. Diferença de apontamento não comprova falta física.'],
+  ['Solicitar do 2000','Máximo(demanda consolidada − disponível 7000, 0).'],
+  ['Pode transferir','Mínimo(solicitação, disponível 2000). Reposição = solicitação − pode transferir.'],
+  ['1500','Informativo; não abate a solicitação.'],['Sem leitura','Célula vazia/— = saldo desconhecido, nunca zero presumido.'],
+  ['Marcações','OP concluída e item OK pelo administrador não entram na solicitação. Os lançamentos SAP não são alterados.'],
+  ['Excluídos',`${report.closedOps} OPs concluídas; ${report.checkedItems} itens OK; ${report.reviewItems} itens sem conciliação confiável.`],
+  ['Filtros',filter,query],['Classe selecionada',classLabel],['Filtro de OP','Localiza materiais; os totais mantêm a demanda de todas as OPs abertas da BOM.'],
+  ['Detalhe por OP','A quantidade é a diferença SAP da OP. Veja o saldo compartilhado e a solicitação somente em Total_por_Item.'],
+  ['Reserva','Esta consulta não reserva nem movimenta estoque.'],
+ ]);
+ criteria['!cols']=[{wch:26},{wch:110},{wch:26}];x.utils.book_append_sheet(book,criteria,'Criterios');
+ return book;
+}

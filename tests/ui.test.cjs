@@ -1773,3 +1773,57 @@ test('PR e PO: rascunho e importado salvam junto; emitido pelo portal salva pelo
  await closeDialog(ui);
  ui.assertHealthy();
 });
+
+test('GRÁFICO: Enviar por e-mail leva os gráficos no corpo, as faltas do Warehouse e a planilha',async t=>{
+ const x=require('xlsx');
+ const ui=await mount(t,{url:'https://portal.test/?modulo=grafico',respond:warehouseApi});
+ await ui.settle(()=>ui.container.querySelector('.op-progress-heading .grafico-email-open'));
+ const boxes=()=>[...document.querySelectorAll('.grafico-email-include input')];
+ const close=async()=>{await pressIn(ui,'.grafico-email-dialog [data-slot="dialog-close"]');await ui.settle(()=>!document.querySelector('.grafico-email-dialog'));await wait(20);};
+ // Antes de Atualizar dados: só o status das OPs (sem MB51 não há consumo nem lista de faltas)
+ await ui.click('.grafico-email-open');await ui.settle(()=>document.querySelector('.grafico-email-dialog'));
+ assert.deepEqual(boxes().map(box=>box.disabled),[false,true,true,true]);
+ assert.match(document.querySelector('.grafico-email-note').textContent,/Atualizar dados/);
+ assert.match(document.querySelector('.grafico-email-preview summary').textContent,/^Acompanhamento das OPs BOM de teste · Teste 39 \(\d\d\/\d\d\/\d{4}\)$/);
+ await close();
+ // Depois da MB51 e dos saldos: os dois gráficos, a lista e a planilha
+ await ui.click('button[aria-label="Atualizar dados"]');
+ await ui.click('.grafico-email-open');
+ await ui.settle(()=>boxes().length===4&&boxes().every(box=>!box.disabled&&box.checked));
+ assert.match(document.querySelector('.grafico-email-include').textContent,/1 material que o 7000 não cobre/);
+ const preview=document.querySelector('.grafico-email-preview iframe').getAttribute('srcdoc');
+ assert.equal((preview.match(/<img src="data:image\/svg\+xml;base64,/g)||[]).length,2,'prévia com os dois gráficos');
+ assert.match(preview,/Materiais a enviar pelo Warehouse/);
+ // PNG sem canvas de verdade: o teste só confere o caminho até o .eml
+ const png=Buffer.from('89504e470d0a1a0a0000000d4948445200000001','hex');
+ const saved=[];t.mock.method(URL,'createObjectURL',blob=>{saved.push(blob);return 'blob:teste';});t.mock.method(URL,'revokeObjectURL',()=>{});
+ t.mock.method(window.HTMLCanvasElement.prototype,'getContext',()=>({fillRect(){},scale(){},drawImage(){},fillStyle:''}));
+ t.mock.method(window.HTMLCanvasElement.prototype,'toBlob',function(done){done(new Blob([png],{type:'image/png'}));});
+ const RealImage=globalThis.Image;globalThis.Image=class{set src(value){this.value=value;setTimeout(()=>this.onload?.(),0);}get src(){return this.value;}};t.after(()=>{globalThis.Image=RealImage;});
+ const [to,cc]=document.querySelectorAll('.grafico-email-fields input[type=email]');
+ await typeInto(to,'warehouse@empresa.test');await typeInto(cc,'pcp@empresa.test');
+ await typeInto([...document.querySelectorAll('.grafico-email-fields label')].find(label=>/Assinar/.test(label.textContent)).querySelector('input'),'Pessoa do PCP');
+ await pressIn(ui,'.grafico-email-dialog .scrap-actions button','E-mail pronto (Outlook)');
+ await ui.settle(()=>saved.some(blob=>blob.type==='message/rfc822')||document.querySelector('.grafico-email-dialog .scrap-message.error'));
+ assert.equal(document.querySelector('.grafico-email-dialog .scrap-message.error')?.textContent,undefined,'sem erro ao montar o e-mail');
+ const eml=Buffer.from(await saved.find(blob=>blob.type==='message/rfc822').arrayBuffer()).toString('latin1');
+ assert.match(eml,/^X-Unsent: 1\r\nTo: warehouse@empresa\.test\r\nCc: pcp@empresa\.test\r\nSubject: =\?UTF-8\?B\?/);
+ assert.deepEqual([...eml.matchAll(/Content-ID: <([^>]+)>/g)].map(match=>match[1]),['grafico-status@wbyd','grafico-consumo@wbyd']);
+ const part=type=>{const match=new RegExp(`Content-Type: ${type.replace(/[/.+]/g,'\\$&')}[^\\r]*\\r\\n(?:[^\\r]+\\r\\n)*\\r\\n([A-Za-z0-9+/=\\r\\n]+?)\\r\\n(?:\\r\\n)?--`).exec(eml);assert.ok(match,type);return Buffer.from(match[1].replace(/\r\n/g,''),'base64');};
+ assert.deepEqual(part('image/png'),png);
+ const text=part('text/plain').toString('utf8'),html=part('text/html').toString('utf8');
+ assert.match(text,/^Prezados, (bom dia|boa tarde|boa noite)\.\n\nSegue o acompanhamento das ordens de produção da BOM de teste · Teste 39/);
+ assert.match(text,/• 001-A · Material de teste · Classe C · enviar 1 PCS · saldo 2000: 2 PCS · Transferir do 2000 · OPs 2315, 2316/);
+ assert.match(text,/Solicito, por gentileza, a transferência dos materiais listados do depósito 2000 para o 7000\./);
+ assert.match(text,/Atenciosamente,\nPessoa do PCP$/);
+ assert.match(html,/<img src="cid:grafico-status@wbyd" width="720"/);
+ const book=x.read(part('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'),{type:'buffer'});
+ assert.deepEqual(book.SheetNames,['Total_por_Item','Falta_por_OP','Criterios']);
+ const totals=x.utils.sheet_to_json(book.Sheets.Total_por_Item);
+ assert.deepEqual(totals.map(row=>[row.SAP,row['Solicitar ao Warehouse (2000)'],row['Pode transferir do 2000']]),[['001-A',1,1]]);
+ assert.match(eml,/Content-Disposition: attachment; filename="Materiais a enviar BOM de teste Teste 39 \d\d-\d\d-\d{4}\.xlsx"/);
+ assert.match(eml,/Content-Disposition: inline; filename="Status das OPs\.png"/);
+ assert.match(document.querySelector('.grafico-email-done').textContent,/E-mail pronto baixado/);
+ await close();
+ ui.assertHealthy();
+});

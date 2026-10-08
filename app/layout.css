@@ -772,3 +772,23 @@ fieldset.cc-remarks.scrap-fieldset{display:grid;grid-template-columns:minmax(0,2
 .scrap-send .scrap-send-row{grid-template-columns:minmax(220px,2fr) minmax(180px,1fr)}
 .scrap-email-preview{display:block;width:100%;height:440px;margin:8px 0 0;border-radius:8px;background:#fff;border:1px solid var(--ui-line)}
 @media (max-width:860px){.scrap-send .scrap-send-row{grid-template-columns:1fr}}
+/* MB51-72 · Enviar o GRÁFICO por e-mail (gráficos + materiais que o Warehouse precisa enviar) */
+.op-progress-heading-side{display:flex;align-items:center;gap:14px;flex-wrap:wrap;justify-content:flex-end}
+.op-progress-count{font-size:12px;color:#aeb6c4;white-space:nowrap}
+.grafico-email-open{display:inline-flex;align-items:center;gap:8px;border-radius:7px;padding:9px 14px;font-size:13px;font-weight:700;border:1px solid #a7c6eb66;background:#a7c6eb12;color:#e9f1fb;cursor:pointer}
+.grafico-email-open:hover{background:#a7c6eb26;border-color:#a7c6eb}
+.grafico-email-dialog{max-width:min(880px,96vw)!important}
+.grafico-email-body{display:flex;flex-direction:column;gap:14px}
+.grafico-email-note{display:flex;gap:8px;align-items:flex-start;margin:0;padding:10px 12px;border-radius:8px;border:1px solid #e0b75c88;background:#e0b75c12;color:#f2cf7f;font-size:12.5px;line-height:1.55}
+.grafico-email-note svg{flex-shrink:0;margin-top:2px}
+.grafico-email-fields{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:10px}
+.grafico-email-fields .wide{grid-column:1/-1}
+.grafico-email-include{margin:0;padding:12px 14px 14px;border:1px solid var(--ui-line);border-radius:10px;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:12px 18px}
+.grafico-email-include legend{padding:0 6px;font-size:11px;color:var(--ui-muted);text-transform:uppercase;letter-spacing:.5px}
+.scrap-dialog .grafico-email-include label{flex-direction:row;align-items:flex-start;gap:9px;font-size:13px;color:var(--ui-text);line-height:1.4;cursor:pointer}
+.scrap-dialog .grafico-email-include input{width:16px;min-height:16px;height:16px;margin:2px 0 0;padding:0;accent-color:#a7c6eb;flex-shrink:0}
+.grafico-email-include small{display:block;font-size:11px;color:var(--ui-muted);margin-top:3px}
+.grafico-email-include label:has(input:disabled){opacity:.55;cursor:default}
+.grafico-email-done{margin:0;font-size:12.5px}
+.grafico-email-preview .scrap-email-preview{height:520px}
+@media (max-width:720px){.grafico-email-fields,.grafico-email-include{grid-template-columns:minmax(0,1fr)}.op-progress-heading-side{justify-content:flex-start}}

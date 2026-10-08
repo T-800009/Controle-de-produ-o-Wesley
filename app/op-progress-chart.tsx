@@ -1,5 +1,5 @@
 import TableViewport from '@/components/table-viewport';
-import {useDeferredValue,useEffect,useMemo,useRef,useState} from 'react';
+import {useDeferredValue,useEffect,useMemo,useRef,useState,type ReactNode} from 'react';
 import type {Row} from '@/lib/materials';
 import {PROGRESS_CLASSES,progressLabel,shortOpLabels,summarizeOpProgress,type ClassProgress} from '@/lib/op-progress';
 import {OP_STATUS_LABELS,type OpStatuses} from '@/lib/op-status';
@@ -8,7 +8,7 @@ import {OpStatusButton,AllOpsOkButton,type OpStatusControls} from './op-status';
 const COLORS={A:'#346775',B:'#d4aa39',C:'#dea077'};
 const SIZE=16;
 const count=(value:number)=>value.toLocaleString('pt-BR');
-export default function OpProgressChart({rows,ops,revision,updatedAt,onSelect,statuses={},control,sourceReady=true}:{rows:Row[];ops:string[];revision:string;updatedAt?:string;onSelect:(op:string)=>void;statuses?:OpStatuses;control:OpStatusControls;sourceReady?:boolean}){
+export default function OpProgressChart({rows,ops,revision,updatedAt,onSelect,statuses={},control,sourceReady=true,actions}:{rows:Row[];ops:string[];revision:string;updatedAt?:string;onSelect:(op:string)=>void;statuses?:OpStatuses;control:OpStatusControls;sourceReady?:boolean;actions?:ReactNode}){
  const [query,setQuery]=useState(''),[status,setStatus]=useState('all'),[page,setPage]=useState(0),[mode,setMode]=useState<'status'|'consumption'>('status');
  const chartArea=useRef<HTMLDivElement>(null);
  const [chartWidth,setChartWidth]=useState(0);
@@ -44,7 +44,7 @@ export default function OpProgressChart({rows,ops,revision,updatedAt,onSelect,st
 
  if(control.loading)return <div className="empty" role="status"><h3>Carregando o status das OPs…</h3></div>;
  return <section className="op-progress-panel" aria-label="Gráfico por OP">
-  <div className="op-progress-heading"><div><p className="eyebrow">ACOMPANHAMENTO DA PRODUÇÃO</p><h3>Visão das ordens de produção</h3><p>BOM selecionada: {revision} · {mode==='status'?'Marcações compartilhadas do administrador':`MB51 consultada em ${stamp}`}</p></div><span>{count(filtered.length)} OPs</span></div>
+  <div className="op-progress-heading"><div><p className="eyebrow">ACOMPANHAMENTO DA PRODUÇÃO</p><h3>Visão das ordens de produção</h3><p>BOM selecionada: {revision} · {mode==='status'?'Marcações compartilhadas do administrador':`MB51 consultada em ${stamp}`}</p></div><div className="op-progress-heading-side"><span className="op-progress-count">{count(filtered.length)} OPs</span>{actions}</div></div>
   <div className="op-progress-mode" role="group" aria-label="Tipo de acompanhamento"><button aria-pressed={mode==='status'} onClick={()=>{setMode('status');setStatus('all');setPage(0);}}>Status das OPs</button><button disabled={!sourceReady} title={!sourceReady?'Clique em Atualizar dados para consultar a MB51':undefined} aria-pressed={mode==='consumption'} onClick={()=>{setMode('consumption');setStatus('all');setPage(0);}}>Consumo por classe</button></div>
   <div className="op-progress-toolbar"><label>Buscar OP<input aria-label="Buscar OP no gráfico" placeholder="Digite o número ou final da OP" value={query} onChange={event=>{setQuery(event.target.value);setPage(0);}}/></label><label>Exibir<select aria-label="Situação das OPs no gráfico" value={status} onChange={event=>{setStatus(event.target.value);setPage(0);}}><option value="all">Todas as OPs</option><optgroup label="Status definido pela equipe"><option value="closed">Concluídas</option><option value="waiting">Aguardando Warehouse</option><option value="not_started">Não iniciadas / sem marcação</option></optgroup>{mode==='consumption'&&<optgroup label="Conferência BOM × MB51"><option value="pending">Com diferenças de consumo</option><option value="complete">Todos os materiais atendidos</option><option value="review">Com dados para conferir</option></optgroup>}</select></label><p>Clique na OP para consultar seus materiais.</p>{control&&<AllOpsOkButton ops={ops} control={control} bomLabel={revision}/>}</div>
   {mode==='status'?<>

@@ -10,6 +10,28 @@ O robô roda no Windows, com o SAP aberto e logado. Ele roda a MB51 (BR02, movim
 
 ---
 
+# MB51-72 — Enviar o GRÁFICO por e-mail para o Warehouse
+
+Na aba **GRÁFICO**, o botão **Enviar por e-mail** (ao lado do número de OPs) monta um e-mail formal para o Warehouse com:
+
+- **Gráfico do status das OPs**: todas as OPs da BOM, verdes (concluídas), amarelas (aguardando Warehouse) e vermelhas (não iniciadas), com a contagem de cada uma.
+- **Gráfico de consumo por classe**: o percentual de materiais atendidos (MB51 + SCRAP) por OP nas classes A, B e C, igual ao da tela.
+- **Materiais a enviar pelo Warehouse**: o que o saldo do 7000 não cobre, com a quantidade a enviar, o saldo do 2000 e a situação (transferir do 2000, reposição ou conferir o saldo), classe A primeiro. O corpo lista até 40 materiais; o resto fica na planilha.
+- **Planilha em anexo**: a mesma do WAREHOUSE (Total_por_Item, Falta_por_OP e Criterios), só com os materiais a enviar.
+- Resumo no começo (OPs por status, percentual atendido de cada classe, quantos materiais a enviar) e o pedido no fim: transferência do 2000 para o 7000 e previsão de reposição do que não tem saldo.
+
+Os gráficos do e-mail têm fundo branco e trazem todas as OPs, sem paginar. Na janela dá para escolher o que vai (os dois gráficos, a lista, a planilha) e ver a prévia.
+
+- **E-mail pronto (Outlook):** baixa um rascunho .eml. Ao abrir, o Outlook mostra a mensagem com os gráficos no corpo e a planilha anexada. É só conferir e enviar.
+- **Abrir no e-mail:** abre o programa de e-mail padrão com um texto curto e baixa a planilha para anexar (link de e-mail não leva imagens).
+- **Copiar texto:** copia o e-mail formatado, sem os gráficos.
+- **Baixar gráficos:** baixa os dois gráficos em PNG.
+- **Para**, **Cc** e **Assinar o e-mail como** ficam salvos no navegador. Na primeira vez, o Para vem dos destinatários do DOSSIÊ.
+
+Sem **Atualizar dados**, a MB51 não foi lida: o e-mail leva só o status das OPs. A lista de faltas entra depois que os saldos do 7000 e do 2000 e as marcações da equipe terminam de carregar, a mesma regra da aba WAREHOUSE (OP concluída e item OK não entram).
+
+---
+
 # MB51-71 — Adicionar qualquer PDF, e-mail formal pronto e aba sempre na versão nova
 
 ## Adicionar PDFs (antes "Importar PDFs existentes")

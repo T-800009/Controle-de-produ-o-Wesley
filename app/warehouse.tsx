@@ -2,7 +2,8 @@ import {useDeferredValue,useMemo,useState} from 'react';
 import {Download,PackageCheck,Truck,ClipboardList} from 'lucide-react';
 import TableViewport from '@/components/table-viewport';
 import type {Dataset,Row} from '@/lib/materials';
-import {warehouseReport,warehouseExportRows,WAREHOUSE_LABELS,type WarehouseItem} from '@/lib/warehouse';
+import {warehouseReport,warehouseWorkbook,WAREHOUSE_LABELS,type WarehouseItem} from '@/lib/warehouse';
+import {PORTAL_VERSION} from '@/lib/version';
 import type {OpStatuses} from '@/lib/op-status';
 
 const fmt=(value:number|null)=>value===null?'—':value.toLocaleString('pt-BR',{maximumFractionDigits:3});
@@ -27,30 +28,8 @@ export default function Warehouse({rows,data,stocks,statuses,checks,ready,onSele
  async function exportExcel(){
   setExporting(true);setError('');
   try{
-   const x=await import('xlsx'),book=x.utils.book_new(),output=warehouseExportRows(filtered,statuses);
-   const totals=x.utils.json_to_sheet(output.totals),detail=x.utils.json_to_sheet(output.details);
-   totals['!cols']=[18,42,8,10,22,16,18,25,16,24,25,22,55,45].map(wch=>({wch}));
-   detail['!cols']=[20,18,42,10,9,16,19,19,20,30,28].map(wch=>({wch}));
-   for(const sheet of [totals,detail])if(sheet['!ref'])sheet['!autofilter']={ref:sheet['!ref']};
-   x.utils.book_append_sheet(book,totals,'Total_por_Item');
-   x.utils.book_append_sheet(book,detail,'Falta_por_OP');
-   const criteria=x.utils.aoa_to_sheet([
-    ['Resumo para o Warehouse / Lougas','MB51-61'],['BOM ativa',data.name+' · '+data.revision],['Gerado em',new Date().toLocaleString('pt-BR')],
-    ['MB51',data.source,stamp(data.updatedAt)],['7000',stocks[0]?.source||'Indisponível',stamp(stocks[0]?.updatedAt)],
-    ['2000',stocks[1]?.source||'Indisponível',stamp(stocks[1]?.updatedAt)],['1500 (referência)',stocks[2]?.source||'Indisponível',stamp(stocks[2]?.updatedAt)],
-    ['Escopo','Todas as OPs da BOM ativa. Não inclui outras revisões.'],
-    ['Consolidação','Material + unidade; saldos contados uma única vez para o total das OPs abertas.'],
-    ['Falta SAP','BOM − consumo efetivo MB51/SCRAP, mínimo zero. Diferença de apontamento não comprova falta física.'],
-    ['Solicitar do 2000','Máximo(demanda consolidada − disponível 7000, 0).'],
-    ['Pode transferir','Mínimo(solicitação, disponível 2000). Reposição = solicitação − pode transferir.'],
-    ['1500','Informativo; não abate a solicitação.'],['Sem leitura','Célula vazia/— = saldo desconhecido, nunca zero presumido.'],
-    ['Marcações','OP concluída e item OK pelo administrador não entram na solicitação. Os lançamentos SAP não são alterados.'],
-    ['Excluídos',`${report.closedOps} OPs concluídas; ${report.checkedItems} itens OK; ${report.reviewItems} itens sem conciliação confiável.`],
-    ['Filtros',filter,query],['Classe selecionada',classLabel],['Filtro de OP','Localiza materiais; os totais mantêm a demanda de todas as OPs abertas da BOM.'],
-    ['Detalhe por OP','A quantidade é a diferença SAP da OP. Veja o saldo compartilhado e a solicitação somente em Total_por_Item.'],
-    ['Reserva','Esta consulta não reserva nem movimenta estoque.'],
-   ]);
-   criteria['!cols']=[{wch:26},{wch:110},{wch:26}];x.utils.book_append_sheet(book,criteria,'Criterios');
+   const x=await import('xlsx');
+   const book=warehouseWorkbook(x,{items:filtered,statuses,report,bom:data,stocks,filter,query,classLabel,version:PORTAL_VERSION});
    x.writeFile(book,`Resumo_Warehouse_${data.revision.replace(/[^a-z0-9-]/gi,'_')}.xlsx`);
   }catch(e){setError('Não foi possível exportar o resumo. '+(e as Error).message);}
   finally{setExporting(false);}

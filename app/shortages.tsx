@@ -1,17 +1,27 @@
 import TableViewport from '@/components/table-viewport';
 import {readAutomatic,clearAutomaticCache} from '@/lib/automatic-worker-client';
-import {useDeferredValue,useEffect,useMemo,useRef,useState} from 'react';
+import {lazy,Suspense,useDeferredValue,useEffect,useMemo,useRef,useState} from 'react';
 import type {Dataset,Row} from '@/lib/materials';
 import {shortageReport} from '@/lib/shortages';
 import {scrapLabel} from '@/lib/scrap';
 import {requestJson,responseError,pollRetryMs} from '@/lib/api';
 import OpProgressChart from './op-progress-chart';
 import Warehouse from './warehouse';
+import {Mail} from 'lucide-react';
+import type {GraficoEmailProps} from './grafico-email';
+const GraficoEmailDialog=lazy(()=>import('./grafico-email'));
 import {manualCheckKey} from '@/lib/warehouse';
 import {OpStatusButton,AllOpsOkButton,type OpStatusControls} from './op-status';
 import {OP_STATUS_LABELS,type OpStatuses} from '@/lib/op-status';
 import MovementProof from './movement-proof';
 import {movementKey} from '@/lib/mb51-evidence';
+
+/** "Enviar por e-mail" no GRÁFICO: a janela (gráficos, lista de faltas, .eml) só carrega ao clicar. */
+function GraficoEmail(props:GraficoEmailProps){
+ const [open,setOpen]=useState(false);
+ return <><button type="button" className="grafico-email-open" onClick={()=>setOpen(true)} title="E-mail para o Warehouse com os gráficos e os materiais que faltam enviar"><Mail size={16}/>Enviar por e-mail</button>
+  {open&&<Suspense fallback={null}><GraficoEmailDialog {...props} onClose={()=>setOpen(false)}/></Suspense>}</>;
+}
 
 export type ViewMode='overview'|'chart'|'warehouse'|'missing'|'complete'|'review'|'scrap';
 const EMPTY_REPORT=shortageReport({id:'',name:'',revision:'',source:'',rows:[],ops:[]},null,null);
@@ -308,7 +318,7 @@ export default function Shortages({data,view,onViewChange:setView,sourceReady=tr
    <button role="tab" aria-selected={view==='review'} aria-pressed={view==='review'} onClick={()=>setView('review')}>Conferir dados <b>{report.reviewRows.length}</b></button>
    <button role="tab" aria-selected={view==='scrap'} aria-pressed={view==='scrap'} onClick={()=>setView('scrap')}>SCRAP / duplicidades <b>{report.scrapRows.length}</b></button>
   </div>
-  {view==='chart'?<OpProgressChart rows={report.allRows} ops={allOps} revision={`${data.name} · ${data.revision}`} updatedAt={data.updatedAt} onSelect={selectChartOrder} statuses={opStatus.states} control={opStatus} sourceReady={sourceReady}/>:<div className="shortage-layout">
+  {view==='chart'?<OpProgressChart rows={report.allRows} ops={allOps} revision={`${data.name} · ${data.revision}`} updatedAt={data.updatedAt} onSelect={selectChartOrder} statuses={opStatus.states} control={opStatus} sourceReady={sourceReady} actions={<GraficoEmail data={data} rows={report.allRows} ops={allOps} stocks={stocks} statuses={opStatus.states} checks={manualChecks} sourceReady={sourceReady} ready={!busy&&!opStatus.loading&&!opStatus.error&&checksReady&&!checksSaving&&!checksError}/>}/>:<div className="shortage-layout">
    <nav className="op-rail" aria-label="OPs">
    <button aria-pressed={op==='all'} onClick={()=>setOp('all')}><span>Todas as OPs</span><small>Visualizar ordens desta BOM</small></button>
     {allOps.map(o=>{const status=opStatus.states[o]?.status||'not_started';return <div key={o} className={`op-card status-${status}`}><OpStatusButton op={o} control={opStatus}/><button className="op-select" aria-pressed={op===o} onClick={()=>selectOrder(o)}><span>OP {o}</span><small>Ver materiais da OP →</small></button></div>})}
