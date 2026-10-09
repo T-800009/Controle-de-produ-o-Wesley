@@ -35,7 +35,7 @@ O robô roda no Windows, com o SAP aberto e logado. Ele roda a MB51 (BR02, movim
 
 ## Publicação
 
-1. Cloudflare → **Workers & Pages → controlofproduction → Settings → Variables and Secrets**: confira se existe o Secret **`PORTAL_PASSWORD`** (mínimo de 12 caracteres). Se não existir, **Add → Secret**.
+1. Cloudflare → **Workers & Pages → controlofproduction → Settings → Variables and Secrets**: confira se existe o Secret **`PORTAL_PASSWORD`** com **12 caracteres ou mais**. Se não existir (ou for menor), **Add → Secret**. O `wrangler.jsonc` agora tem `REQUIRE_PASSWORD="false"`: a consulta começa aberta, e alterar sempre pede a senha.
 2. Envie o pacote ao GitHub como sempre; o build publica sozinho.
 3. Confira **MB51-73** no rodapé. Sem entrar, o topo mostra **CONSULTA**. Clique em **Entrar como ADM** e use a senha.
 

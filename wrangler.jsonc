@@ -9,10 +9,12 @@
   "workers_dev": true,
   "preview_urls": false,
   "keep_vars": true,
-  // Senha obrigatória por padrão: sem PORTAL_PASSWORD o site fica bloqueado,
-  // nunca aberto como administrador para qualquer pessoa.
+  // Alterar qualquer coisa sempre exige a senha de ADM (Secret PORTAL_PASSWORD,
+  // mínimo de 12 caracteres). REQUIRE_PASSWORD só define como a CONSULTA começa:
+  // "false" = aberta (vê sem senha, sem alterar). O ADM troca para fechada na
+  // janela Acesso do portal; essa escolha fica no banco e vale acima deste valor.
   "vars": {
-    "REQUIRE_PASSWORD": "true"
+    "REQUIRE_PASSWORD": "false"
   },
   "assets": {
     "directory": "./dist",
