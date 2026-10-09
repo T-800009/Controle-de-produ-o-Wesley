@@ -1,4 +1,4 @@
-import {configured,authRoute,loginPage,sessionRole,type PortalRole,type PasswordEnv} from './auth';
+import {authRoute,accessRoute,loginPage,resolveAccess,requestLang,sameOrigin,type PortalRole,type PasswordEnv} from './auth';
 import {automaticSource,automaticCoois,automaticAnaSource} from './automatic';
 import {ensureSchema,list,listPlans,updatePlanUnits,read,save,removeDataset,updateDatasetMeta,DatasetRemovalError,listManualChecks,manualChecksRevision,updateManualChecks,clearManualChecks,opStatusRevision,listOpStatuses,updateOpStatus,updateOpStatuses} from './storage';
 import {isOpStatus} from '../lib/op-status';
@@ -6,6 +6,8 @@ import {anaNotesRoute} from './ana-notes';
 import {STOCK_MODULES,stockModule} from '../lib/stock-modules';
 import {PORTAL_VERSION} from '../lib/version';
 import {serverFailure} from './server-errors';
+import {secured} from './security-headers';
+import {allowRequest,VIEW_LIMITS} from './rate-limit';
 import {resolveDatabase,databaseProvider,type DatabaseEnv} from './database';
 import {DossieError,listDossies,getDossie,createDossies,updateDossie,sendDossie,answerDossie,closeDossie,reopenDossie,deleteDossie,addDossieFile,deleteDossieFile,readDossieFile,bomLookup} from './dossies';
 import {ScrapError,docKind,listScrapForms,lookupMaterials,readScrapFile,createScrapForm,importScrapForm,updateScrapDraft,uploadScrapPdf,reopenScrapForm,updateScrapPosting,markScrapSent,deleteScrapForm} from './scrap-forms';
@@ -18,21 +20,27 @@ async function bodyLimited(req:Request){
  chunks.push(decoder.decode());return JSON.parse(chunks.join(''));
 }
 export default {
- async fetch(req:Request,bindings:Env):Promise<Response>{
+ async fetch(req:Request,bindings:Env):Promise<Response>{return secured(await handle(req,bindings));}
+};
+async function handle(req:Request,bindings:Env):Promise<Response>{
   const url=new URL(req.url),path=url.pathname;
   try{
    const env={...bindings,DB:await resolveDatabase(bindings)};
-   const requirePassword=env.REQUIRE_PASSWORD==='true';
-   let role:PortalRole='admin';
-   if(requirePassword){const route=await authRoute(req,env);if(route)return route;}
-   else if(path==='/auth/login'||path==='/auth/logout')return new Response(null,{status:303,headers:{Location:'/', 'Cache-Control':'no-store'}});
-   if(requirePassword){
-    const authenticatedRole=await sessionRole(req,env);
-    if(!authenticatedRole)return path.startsWith('/api/')?json({error:configured(env)?'Sessão expirada. Recarregue a página e entre novamente.':'O responsável precisa configurar a senha do portal.'},configured(env)?401:503):loginPage('',configured(env)?200:503,!configured(env));
-    role=authenticatedRole;
+   // Quem não entrou com senha é Consulta: vê, mas não altera. Alterar exige a senha de ADM.
+   const access=await resolveAccess(req,env);
+   const route=await authRoute(req,env,access);if(route)return route;
+   if(!access.role){
+    if(path.startsWith('/api/'))return json({error:access.adminConfigured?'Acesso de consulta fechado. Abra o link de consulta ou entre com a senha.':'O responsável precisa configurar a senha do portal.',code:'LOGIN_REQUIRED'},access.adminConfigured?401:503);
+    return loginPage('',access.adminConfigured?200:503,!access.adminConfigured,{lang:requestLang(req),mode:'closed',next:path+url.search});
    }
-   if(path==='/api/version')return json({version:PORTAL_VERSION,anyPdfImport:true,formalEmail:true,staleTabGuard:true,attachAnyPdf:true,ccApprovalOnLastPage:true,dossies:true,scrapForms:true,costCenterForms:true,costCenterFromSpreadsheet:true,costCenterMaxItems:300,legacyImport:true,scrapFormSignatureCheck:true,costCenterSheetRead:false,allOpsOk:true,stock7000Projects:true,planBoms:true,bomDelete:true,bomImportWithoutOpColumns:true,bomEditOps:true,stock7000SingleMb51Read:true,databaseProvider:databaseProvider(bindings),tursoSupported:true,databaseErrorCodes:true,revisionOnlyPolling:true,mb51Trace:true,scrapDocumentReconciliation:true,backgroundSourceProcessing:true,stockSources:STOCK_MODULES.map(stock=>({id:stock.id,sheet:stock.sheet})),warehouseClassFilter:true,spacedNavigation:true,operationalStatusChart:true,warehouseConsolidated:true,warehouseSharedBalance:true,opCardsWithoutSapCounts:true,responsiveLayout:true,anaNotesSingleColumn:true,anaOrderCards:true,production7000First:true,warehouse2000Comparison:true,mb51OrderCoverage:true,automaticSource:true,coois:true,cooisOptional:true,anaCheck:true,anaVisualOverview:true,anaPortugueseDescriptions:true,anaSharedNotes:true,anaAnalystRole:true,anaCooisPendingFlag:true,anaNativeSap:true,anaCostReferences:true,anaCurrencyTotals:true,anaCoverageAudit:true,opStatusAndConsumptionViews:true,anaOptionalMm60:true,anaSources:['KOB1','ZPP009','MM60','COOIS'],physicalFinalization:false,manualOpStatus:true,stockSingleRead:true,stock2000:true,stockHeaderMapping:true,opClassChart:true,mainChartNavigation:true,fullWidthLayout:true,topTableScroll:true,sapOnlyPending:false,neutralTheme:true,excelFormula:false,formulaKeyFallback:true,footerBomUpload:true,multipleBoms:true,autoBomRevision:true,scrap:true,scrapDiagnostics:true,scrapConsumption:true,scrapNetting:true,overageNotShortage:true,sharedAdminChecks:true,viewerReadOnly:true,bulkManualChecks:true,instantSharedChecks:true,refreshIntervalMinutes:0,manualRefreshOnly:true,fixedBomItems:true,performanceOptimized:true});
-   if(path==='/api/session')return json({role,canMark:role==='admin',canWriteAna:role==='admin'||role==='analyst'});
+   const role:PortalRole=access.role;
+   const isAdmin=role==='admin';
+   if(role==='viewer'&&path.startsWith('/api/')&&!allowRequest((access.via==='open'?'open:':'view:')+(req.headers.get('CF-Connecting-IP')||'local'),access.via==='open'?VIEW_LIMITS.open:VIEW_LIMITS.session)){
+    return Response.json({error:'Muitas consultas seguidas deste endereço. Aguarde um minuto e tente de novo.',code:'RATE_LIMITED',retryAfter:60},{status:429,headers:{'Cache-Control':'no-store','Retry-After':'60'}});
+   }
+   if(path==='/api/version')return json({version:PORTAL_VERSION,readOnlyWithoutPassword:true,adminPasswordForChanges:true,accessModes:['open','closed'],viewLink:true,securityHeaders:true,loginOriginFix:true,viewerRateLimit:true,anyPdfImport:true,formalEmail:true,staleTabGuard:true,attachAnyPdf:true,ccApprovalOnLastPage:true,dossies:true,scrapForms:true,costCenterForms:true,costCenterFromSpreadsheet:true,costCenterMaxItems:300,legacyImport:true,scrapFormSignatureCheck:true,costCenterSheetRead:false,allOpsOk:true,stock7000Projects:true,planBoms:true,bomDelete:true,bomImportWithoutOpColumns:true,bomEditOps:true,stock7000SingleMb51Read:true,databaseProvider:databaseProvider(bindings),tursoSupported:true,databaseErrorCodes:true,revisionOnlyPolling:true,mb51Trace:true,scrapDocumentReconciliation:true,backgroundSourceProcessing:true,stockSources:STOCK_MODULES.map(stock=>({id:stock.id,sheet:stock.sheet})),warehouseClassFilter:true,spacedNavigation:true,operationalStatusChart:true,warehouseConsolidated:true,warehouseSharedBalance:true,opCardsWithoutSapCounts:true,responsiveLayout:true,anaNotesSingleColumn:true,anaOrderCards:true,production7000First:true,warehouse2000Comparison:true,mb51OrderCoverage:true,automaticSource:true,coois:true,cooisOptional:true,anaCheck:true,anaVisualOverview:true,anaPortugueseDescriptions:true,anaSharedNotes:true,anaAnalystRole:true,anaCooisPendingFlag:true,anaNativeSap:true,anaCostReferences:true,anaCurrencyTotals:true,anaCoverageAudit:true,opStatusAndConsumptionViews:true,anaOptionalMm60:true,anaSources:['KOB1','ZPP009','MM60','COOIS'],physicalFinalization:false,manualOpStatus:true,stockSingleRead:true,stock2000:true,stockHeaderMapping:true,opClassChart:true,mainChartNavigation:true,fullWidthLayout:true,topTableScroll:true,sapOnlyPending:false,neutralTheme:true,excelFormula:false,formulaKeyFallback:true,footerBomUpload:true,multipleBoms:true,autoBomRevision:true,scrap:true,scrapDiagnostics:true,scrapConsumption:true,scrapNetting:true,overageNotShortage:true,sharedAdminChecks:true,viewerReadOnly:true,bulkManualChecks:true,instantSharedChecks:true,refreshIntervalMinutes:0,manualRefreshOnly:true,fixedBomItems:true,performanceOptimized:true});
+   if(path==='/api/session')return json({role,via:access.via,mode:access.mode,adminConfigured:access.adminConfigured,canEdit:role!=='viewer',canMark:isAdmin,canWriteAna:isAdmin||role==='analyst'});
+   if(path==='/api/access')return await accessRoute(req,env,access);
    if(path==='/api/ana-notes')return await anaNotesRoute(req,env.DB,role);
    if(path==='/api/data'){
     if(!env.DB)return json({error:'Banco de dados não configurado.'},503);
@@ -45,14 +53,14 @@ export default {
      return json(found);
     }
     if(req.method==='DELETE'){
-     if(requirePassword&&role!=='admin')return json({error:'Somente o administrador pode apagar uma BOM.'},403);
-     if(req.headers.get('origin')!==url.origin||req.headers.get('sec-fetch-site')==='cross-site')return json({error:'Origem inválida.'},403);
+     if(!isAdmin)return json({error:'Somente o administrador pode apagar uma BOM.'},403);
+     if(!sameOrigin(req))return json({error:'Origem inválida.'},403);
      try{return json(await removeDataset(env.DB,url.searchParams.get('id')||'',url.searchParams.get('version')||''));}
      catch(e){if(e instanceof DatasetRemovalError)return json({error:e.message},e.status);throw e;}
     }
     if(req.method==='POST'){
-     if(requirePassword&&role!=='admin')return json({error:'Somente o administrador pode importar ou alterar bases.'},403);
-     if(req.headers.get('origin')!==url.origin||req.headers.get('sec-fetch-site')==='cross-site')return json({error:'Origem inválida.'},403);
+     if(!isAdmin)return json({error:'Somente o administrador pode importar ou alterar bases.'},403);
+     if(!sameOrigin(req))return json({error:'Origem inválida.'},403);
      if(!req.headers.get('content-type')?.startsWith('application/json'))return json({error:'Formato inválido.'},415);
      try{const saved=await save(env.DB,await bodyLimited(req));if(saved.id.startsWith('consumo:'))await clearManualChecks(env.DB,saved.id);return json(saved);}catch(e){return json({error:(e as Error).message},400);}
     }
@@ -74,7 +82,7 @@ export default {
      }
      if(req.method!=='POST')return json({error:'Método não permitido.'},405);
      if(!canEdit)return json({error:'O perfil Consulta pode ver e baixar os formulários. Use o acesso de Analista ou Administrador para preencher e anexar PDFs.'},403);
-     if(req.headers.get('origin')!==url.origin||req.headers.get('sec-fetch-site')==='cross-site')return json({error:'Origem inválida.'},403);
+     if(!sameOrigin(req))return json({error:'Origem inválida.'},403);
      if(!req.headers.get('content-type')?.startsWith('application/json'))return json({error:'Formato inválido.'},415);
      let body:any;
      try{body=await bodyLimited(req);}catch(e){return json({error:e instanceof SyntaxError?'Formato inválido.':(e as Error).message},400);}
@@ -115,7 +123,7 @@ export default {
      }
      if(req.method!=='POST')return json({error:'Método não permitido.'},405);
      if(!canEdit)return json({error:'O perfil Consulta vê os dossiês. Use o acesso de Analista ou Administrador para abrir, cobrar e encerrar.'},403);
-     if(req.headers.get('origin')!==url.origin||req.headers.get('sec-fetch-site')==='cross-site')return json({error:'Origem inválida.'},403);
+     if(!sameOrigin(req))return json({error:'Origem inválida.'},403);
      if(!req.headers.get('content-type')?.startsWith('application/json'))return json({error:'Formato inválido.'},415);
      let body:any;
      try{body=await bodyLimited(req);}catch(e){return json({error:e instanceof SyntaxError?'Formato inválido.':(e as Error).message},400);}
@@ -140,13 +148,13 @@ export default {
     await ensureSchema(env.DB);
     if(req.method==='GET'){
      const id=url.searchParams.get('id');
-     if(!id)return json({plans:await listPlans(env.DB),canEdit:!requirePassword||role==='admin'});
+     if(!id)return json({plans:await listPlans(env.DB),canEdit:isAdmin});
      if(!/^plano:[a-z0-9-]{1,120}$/.test(id))return json({error:'BOM do plano inválida.'},400);
      const found=await read(env.DB,id);
      return found?json(found):json({error:'BOM do plano não encontrada.',code:'DATASET_NOT_FOUND'},404);
     }
-    if(requirePassword&&role!=='admin')return json({error:'Somente o administrador pode cadastrar ou alterar BOMs do plano.'},403);
-    if(req.headers.get('origin')!==url.origin||req.headers.get('sec-fetch-site')==='cross-site')return json({error:'Origem inválida.'},403);
+    if(!isAdmin)return json({error:'Somente o administrador pode cadastrar ou alterar BOMs do plano.'},403);
+    if(!sameOrigin(req))return json({error:'Origem inválida.'},403);
     try{
      if(req.method==='DELETE')return json(await removeDataset(env.DB,url.searchParams.get('id')||'',url.searchParams.get('version')||''));
      if(req.method!=='POST')return json({error:'Método não permitido.'},405);
@@ -164,8 +172,8 @@ export default {
    if(path==='/api/data-meta'){
     if(!env.DB)return json({error:'Banco de dados não configurado.'},503);
     if(req.method!=='POST')return json({error:'Método não permitido.'},405);
-    if(requirePassword&&role!=='admin')return json({error:'Somente o administrador pode renomear uma BOM.'},403);
-    if(req.headers.get('origin')!==url.origin||req.headers.get('sec-fetch-site')==='cross-site')return json({error:'Origem inválida.'},403);
+    if(!isAdmin)return json({error:'Somente o administrador pode renomear uma BOM.'},403);
+    if(!sameOrigin(req))return json({error:'Origem inválida.'},403);
     if(!req.headers.get('content-type')?.startsWith('application/json'))return json({error:'Formato inválido.'},415);
     await ensureSchema(env.DB);
     try{const body=await bodyLimited(req);return json(await updateDatasetMeta(env.DB,String(body?.id||''),String(body?.version||''),body||{}));}
@@ -183,7 +191,7 @@ export default {
     }
     if(req.method!=='POST')return json({error:'Método não permitido.'},405);
     if(role!=='admin')return json({error:'Somente o administrador pode alterar o status das OPs.'},403);
-    if(req.headers.get('origin')!==url.origin||req.headers.get('sec-fetch-site')==='cross-site')return json({error:'Origem inválida.'},403);
+    if(!sameOrigin(req))return json({error:'Origem inválida.'},403);
     if(!req.headers.get('content-type')?.startsWith('application/json'))return json({error:'Formato inválido.'},415);
     try{
      const payload=await bodyLimited(req);
@@ -208,7 +216,7 @@ export default {
      return json({...await listManualChecks(env.DB,id),role,canMark:role==='admin'});
     }
     if(role!=='admin')return json({error:'Somente o administrador pode marcar itens como OK.'},403);
-    if(req.headers.get('origin')!==url.origin||req.headers.get('sec-fetch-site')==='cross-site')return json({error:'Origem inválida.'},403);
+    if(!sameOrigin(req))return json({error:'Origem inválida.'},403);
     if(!req.headers.get('content-type')?.startsWith('application/json'))return json({error:'Formato inválido.'},415);
     try{
      const payload=await bodyLimited(req) as {id?:string;keys?:unknown;checked?:unknown};
@@ -239,27 +247,9 @@ export default {
     if(!['KOB1','ZPP009','MM60','COOIS'].includes(sheet))return json({error:'Fonte Ana inválida.'},400);
     try{return await automaticAnaSource(sheet,env);}catch(e){return json({error:(e as Error).message||'Falha na leitura da fonte da Ana.'},502);}
    }
-   if(path==='/api/sheets'){
-    if(req.method!=='GET')return json({error:'Método não permitido.'},405);
-    const id=url.searchParams.get('id')||'',sheet=url.searchParams.get('sheet')||'';
-    if(!/^[A-Za-z0-9_-]{20,200}$/.test(id)||!sheet||sheet.length>200)return json({error:'Informe uma planilha e uma aba válidas.'},400);
-    const response=await fetch(`https://docs.google.com/spreadsheets/d/${id}/gviz/tq?${new URLSearchParams({tqx:'out:json',sheet,headers:'1'})}`,{signal:AbortSignal.timeout(15000)});
-    if(!response.ok)return json({error:'Não foi possível acessar a planilha. Confira as permissões.'},400);
-    const raw=await response.text(),match=raw.match(/setResponse\(([\s\S]*)\);?\s*$/);
-    if(!match)return json({error:'Esta planilha exige autenticação Google. Essa conexão ainda não foi configurada.'},400);
-    const d=JSON.parse(match[1]);if(d.status==='error'||!d.table)return json({error:'Aba indisponível. Confira o nome e o acesso.'},400);
-    const keys=d.table.cols.map((c:any)=>c.label||c.id);
-    return json({rows:d.table.rows.map((r:any)=>Object.fromEntries(keys.map((k:string,i:number)=>[k,r.c[i]?.v??null]))),readAt:new Date().toISOString()});
-   }
    if(path.startsWith('/api/'))return json({error:'Rota não encontrada.'},404);
    const response=await env.ASSETS.fetch(req),headers=new Headers(response.headers);
-   headers.set('X-Content-Type-Options','nosniff');headers.set('X-Frame-Options','DENY');headers.set('Referrer-Policy','same-origin');headers.set('Cache-Control',path.startsWith('/assets/')?'private, max-age=31536000, immutable':'no-store');
-   if(!requirePassword&&headers.get('Content-Type')?.includes('text/html')){
-    const html=(await response.text()).replace('</head>','<style>form[action="/auth/logout"]{display:none!important}</style></head>');
-    headers.delete('Content-Length');headers.delete('ETag');
-    return new Response(html,{status:response.status,headers});
-   }
+   headers.set('Cache-Control',path.startsWith('/assets/')?'private, max-age=31536000, immutable':'no-store');
    return new Response(response.body,{status:response.status,headers});
   }catch(error){return serverFailure(error,path);}
- }
-};
+}

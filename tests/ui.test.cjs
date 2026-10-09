@@ -1827,3 +1827,37 @@ test('GRÁFICO: Enviar por e-mail leva os gráficos no corpo, as faltas do Wareh
  await close();
  ui.assertHealthy();
 });
+
+test('modo consulta: faixa de aviso, Entrar como ADM e nenhum botão de alterar; ADM vê Acesso e os cadastros',async t=>{
+ const as=(session)=>url=>url.pathname==='/api/session'?Response.json(session):apiResponse(url);
+ const viewer=await mount(t,{respond:as({role:'viewer',via:'open',mode:'open',adminConfigured:true,canEdit:false})});
+ await viewer.settle(()=>viewer.container.querySelector('.readonly-bar'));
+ assert.equal(viewer.container.querySelector('.role-badge').textContent,'CONSULTA');
+ assert.match(viewer.container.querySelector('.readonly-bar').textContent,/Modo consulta\..*não altera nada/);
+ assert.ok(viewer.container.querySelector('a.header-login[href="/entrar"]'),'botão Entrar como ADM');
+ assert.equal(viewer.container.querySelector('form[action="/auth/logout"]'),null,'consulta aberta não tem Sair');
+ assert.equal([...viewer.container.querySelectorAll('button')].some(b=>/Cadastrar nova BOM|Acesso$/.test(b.textContent.trim())),false,'sem cadastro nem Acesso');
+ await viewer.click('[role="tab"]','7000');
+ await viewer.settle(()=>viewer.container.querySelector('h1')?.textContent==='DEPÓSITO 7000');
+ assert.equal([...viewer.container.querySelectorAll('button')].some(b=>b.textContent.includes('Importar Excel')),false,'consulta não importa Excel');
+ viewer.assertHealthy();
+});
+
+test('ADM: Acesso, Sair e cadastros visíveis; sem senha cadastrada a consulta avisa',async t=>{
+ const as=(session)=>url=>url.pathname==='/api/session'?Response.json(session):apiResponse(url);
+ const admin=await mount(t,{respond:as({role:'admin',via:'password',mode:'open',adminConfigured:true,canEdit:true})});
+ await admin.settle(()=>admin.container.querySelector('.role-badge')?.textContent==='ADM');
+ assert.equal(admin.container.querySelector('.readonly-bar'),null);
+ assert.ok([...admin.container.querySelectorAll('button')].some(b=>b.textContent.trim()==='Acesso'));
+ assert.ok(admin.container.querySelector('form[action="/auth/logout"] button'));
+ assert.ok([...admin.container.querySelectorAll('button')].some(b=>b.textContent.includes('Cadastrar nova BOM')));
+ admin.assertHealthy();
+});
+
+test('consulta sem senha de ADM cadastrada mostra o aviso em vez do botão de entrar',async t=>{
+ const ui=await mount(t,{respond:url=>url.pathname==='/api/session'?Response.json({role:'viewer',via:'open',mode:'open',adminConfigured:false}):apiResponse(url)});
+ await ui.settle(()=>ui.container.querySelector('.readonly-bar'));
+ assert.match(ui.container.querySelector('.readonly-bar').textContent,/ainda não foi cadastrada/);
+ assert.equal(ui.container.querySelector('a.header-login'),null);
+ ui.assertHealthy();
+});

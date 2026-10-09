@@ -45,7 +45,7 @@ const environment={DB:db,ASSETS:assets,PORTAL_PASSWORD:password,REQUIRE_PASSWORD
 const call=(path,options={},env=environment)=>handler.fetch(new Request('https://portal.test'+path,options),env);
 const login=(value,ip='192.0.2.1',origin='https://portal.test')=>call('/auth/login',{method:'POST',headers:{Origin:origin,'Content-Type':'application/x-www-form-urlencoded','CF-Connecting-IP':ip},body:new URLSearchParams({password:value}).toString()});
 assert.equal((await call('/api/data')).status,401);
-assert.match(await (await call('/')).text(),/Senha do portal/);
+{const page=await (await call('/')).text();assert.match(page,/type="password"/);assert.match(page,/Acesso ao portal/);}
 assert.equal((await login(password,'192.0.2.1','https://attacker.test')).status,403);
 assert.equal((await login('wrong')).status,401);
 const logged=await login(password);assert.equal(logged.status,303);
@@ -79,6 +79,8 @@ const markResponse=await call(checksUrl,{method:'POST',headers:{...headers,Origi
  const queries=[];
  const traced={prepare(sql){queries.push(sql);return db.prepare(sql);},batch(statements){return db.batch(statements);}};
  const revision=await storage.manualChecksRevision(db,'consumo:test');
+ // A configuração de acesso fica em cache (10 s): a primeira chamada a carrega, as seguintes não leem de novo.
+ await call(checksUrl+'&revision='+revision,{}, {DB:traced,ASSETS:assets,REQUIRE_PASSWORD:'false'});queries.length=0;
  const result=await call(checksUrl+'&revision='+revision,{}, {DB:traced,ASSETS:assets,REQUIRE_PASSWORD:'false'});
  assert.equal(result.status,200);assert.equal((await result.json()).unchanged,true);
  const reads=queries.filter(sql=>/^SELECT/i.test(sql));

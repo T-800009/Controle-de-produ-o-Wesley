@@ -1,0 +1,53 @@
+/* MB51-73 · acesso, idioma e leitura. Carregado por último: só acrescenta e ajusta. */
+
+/* ---------- Cabeçalho: perfil, acesso e idioma ---------- */
+.header-right{gap:10px;flex-wrap:nowrap}
+.role-badge{display:inline-flex;align-items:center;height:26px;padding:0 10px;border-radius:999px;font-size:11px;font-weight:800;letter-spacing:.8px;border:1px solid #ffffff2e;color:#e8ebf0;background:#ffffff0d;white-space:nowrap}
+.role-badge.role-admin{border-color:#e3263699;background:#e326361f;color:#ffd9dc}
+.role-badge.role-analyst{border-color:#d9a52099;background:#d9a5201f;color:#fbe7b3}
+.role-badge.role-viewer{border-color:#6f9bd699;background:#6f9bd61a;color:#d4e3f7}
+.header-button,.shell .header-right form button.header-button{display:inline-flex;align-items:center;gap:6px;height:30px;padding:0 11px;border-radius:6px;border:1px solid #ffffff2e;background:transparent;color:#eef0f4;font-size:12px;font-weight:700;text-decoration:none;white-space:nowrap;cursor:pointer}
+.header-button:hover{background:#ffffff12;border-color:#ffffff4d}
+.header-login{border-color:#e32636;background:#e32636;color:#fff}
+.header-login:hover{background:#c81f2e;border-color:#c81f2e}
+.lang-toggle{display:inline-flex;align-items:center;height:30px;padding:2px;border:1px solid #ffffff2e;border-radius:6px;gap:2px}
+.lang-toggle button{height:24px;min-width:32px;padding:0 7px;border:0;border-radius:4px;background:transparent;color:#c9ced8;font-size:11.5px;font-weight:800;letter-spacing:.4px;cursor:pointer}
+.lang-toggle button[aria-pressed=true]{background:#f4f5f7;color:#0a0b0d}
+.lang-toggle button:focus-visible,.header-button:focus-visible{outline:2px solid #ff5267;outline-offset:2px}
+
+/* Faixa do modo consulta */
+.readonly-bar{position:sticky;top:var(--topbar-height,88px);z-index:25;display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:8px 4%;background:#13233a;border-bottom:1px solid #6f9bd64d;color:#dce7f6;font-size:13px}
+.readonly-bar svg{flex:none;color:#8fb5ea}
+.readonly-bar a{margin-left:auto;color:#fff;font-weight:700;text-decoration:underline;text-underline-offset:3px}
+.readonly-muted{margin-left:auto;color:#a9b9cf}
+
+/* Janela Acesso */
+.access-dialog{max-width:640px}
+.access-body{display:grid;gap:18px;margin-top:6px}
+.access-modes{display:grid;gap:10px;border:0;padding:0;margin:0}
+.access-modes legend{font-size:12px;font-weight:800;letter-spacing:.6px;text-transform:uppercase;color:#aab2bf;margin-bottom:8px}
+.access-modes label{display:grid;grid-template-columns:auto auto 1fr;align-items:start;gap:10px;padding:13px 14px;border:1px solid #ffffff1f;border-radius:8px;cursor:pointer;background:#ffffff05}
+.access-modes label.selected{border-color:#e32636;background:#e326360f}
+.access-modes input{margin-top:3px;accent-color:#e32636}
+.access-modes b{display:block;font-size:14px}
+.access-modes small{display:block;margin-top:3px;font-size:12.5px;line-height:1.5;color:#b2b9c5}
+.access-warning{display:flex;gap:9px;align-items:flex-start;padding:11px 13px;border-radius:8px;background:#d9a5201a;border:1px solid #d9a52066;color:#f6e4b5;font-size:12.5px;line-height:1.5;margin:0}
+.access-warning svg{flex:none;margin-top:2px}
+.access-link,.access-sessions{display:grid;gap:8px;padding-top:14px;border-top:1px solid #ffffff14}
+.access-link h3,.access-sessions h3{display:flex;align-items:center;gap:7px;margin:0;font-size:14px}
+.access-link small,.access-sessions small{font-size:12px;line-height:1.5;color:#aab2bf}
+.access-link-row{display:flex;gap:8px}
+.access-link-row input{flex:1;min-width:0;padding:9px 10px;border-radius:6px;border:1px solid #ffffff2e;background:#08090b;color:#e8ebf0;font:12px ui-monospace,SFMono-Regular,Consolas,monospace}
+.access-link-row button{display:inline-flex;align-items:center;gap:6px;padding:0 12px;border-radius:6px}
+.access-link .text-button,.access-sessions .text-button{justify-self:start}
+.access-loading,.access-notice{display:flex;align-items:center;gap:8px;font-size:13px;color:#c8ced8;margin:10px 0 0}
+.access-notice{color:#bfe8d2}
+
+@media(max-width:720px){
+ .readonly-bar{top:auto;position:relative;padding:8px 20px;font-size:12px}
+ .readonly-bar a,.readonly-muted{margin-left:0}
+ .header-right{gap:6px}
+ .header-button{padding:0 8px;font-size:11px}
+ .header-login span{display:none}
+ .role-badge{height:24px;padding:0 8px;font-size:10px}
+}

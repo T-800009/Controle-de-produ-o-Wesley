@@ -15,6 +15,7 @@ const { build } = require(require.resolve("esbuild", { paths: [wr] }));
 const { Miniflare } = require(require.resolve("miniflare", { paths: [wr] }));
 const temp = fs.mkdtempSync(path.join(rootDir, ".dossie-ui-"));
 let Portal, ErrorBoundary, createRoot, handler, mf;
+const ADMIN_PASSWORD = require("node:crypto").randomBytes(18).toString("hex");
 
 before(async () => {
   await build({
@@ -67,7 +68,14 @@ function gviz(headers, rows) {
 
 async function mount(t, { url = "https://portal.test/?modulo=dossie", viewer = false } = {}) {
   const db = await mf.getD1Database("DB");
-  const env = { DB: db, ASSETS: { fetch: async () => new Response("") }, REQUIRE_PASSWORD: "false" };
+  // Sem senha o Worker só deixa consultar: a tela fala com ele como administrador logado.
+  const env = { DB: db, ASSETS: { fetch: async () => new Response("") }, REQUIRE_PASSWORD: "false", PORTAL_PASSWORD: ADMIN_PASSWORD };
+  const login = await handler.fetch(
+    new Request("https://portal.test/auth/login", { method: "POST", headers: { Origin: "https://portal.test", "Content-Type": "application/x-www-form-urlencoded", "CF-Connecting-IP": "192.0.2.77" }, body: new URLSearchParams({ password: ADMIN_PASSWORD }).toString() }),
+    env,
+  );
+  assert.equal(login.status, 303, "login do administrador no teste");
+  const adminCookie = login.headers.get("Set-Cookie").split(";")[0];
   const dom = new JSDOM('<!doctype html><div id="root"></div>', { url, pretendToBeVisual: true });
   const win = dom.window,
     previous = new Map();
@@ -110,7 +118,7 @@ async function mount(t, { url = "https://portal.test/?modulo=dossie", viewer = f
       return gviz(["Material", "Texto breve material", "UM básica", "Centro", "Utilização livre", "Val.utiliz.livre"], depot === "7000" ? [["19376997-00", "TKC", "PCS", "BR02", 168, 1762.32]] : [["OUTRO-1", "X", "PCS", "BR02", 1, 1]]);
     }
     if (parsed.pathname === "/api/dossies") {
-      const request = new Request(parsed.href, { method: init.method || "GET", headers: { ...(init.headers || {}), Origin: "https://portal.test" }, body: init.body });
+      const request = new Request(parsed.href, { method: init.method || "GET", headers: { ...(init.headers || {}), Origin: "https://portal.test", Cookie: adminCookie }, body: init.body });
       const response = await handler.fetch(request, env);
       if (!viewer || !response.headers.get("content-type")?.includes("json")) return response;
       const body = await response.json();

@@ -4,7 +4,7 @@ import {resolve} from 'node:path';
 import {createHash} from 'node:crypto';
 import {pathToFileURL} from 'node:url';
 
-const tables=['datasets','entries','manual_checks','manual_check_state','op_statuses','op_status_state','ana_notes','scrap_forms','scrap_counters','cc_forms','cc_counters','scrap_files','dossies','dossie_counters','dossie_files','portal_sessions','portal_attempts'];
+const tables=['datasets','entries','manual_checks','manual_check_state','op_statuses','op_status_state','ana_notes','scrap_forms','scrap_counters','cc_forms','cc_counters','scrap_files','dossies','dossie_counters','dossie_files','portal_sessions','portal_attempts','portal_settings'];
 const quote=name=>'"'+name.replaceAll('"','""')+'"';
 export function prepareTurso(input,output){
  input=resolve(input);output=resolve(output);

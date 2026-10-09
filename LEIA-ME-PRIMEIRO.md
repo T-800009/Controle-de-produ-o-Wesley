@@ -10,6 +10,37 @@ O robô roda no Windows, com o SAP aberto e logado. Ele roda a MB51 (BR02, movim
 
 ---
 
+# MB51-73 — Senha de ADM para alterar; sem senha, só consulta
+
+**Antes desta versão o portal publicado abria sem senha e com perfil ADMINISTRADOR para qualquer pessoa com o endereço** (dava para importar, marcar, editar e apagar). Agora:
+
+- **Sem senha = Consulta.** Vê todas as abas, gráficos, PDFs e e-mails, mas nenhum botão de alterar aparece e o servidor recusa qualquer gravação (403), mesmo que alguém chame a API direto.
+- **Senha de ADM = altera.** No topo, **Entrar como ADM** abre a página de entrada; depois de entrar, o topo mostra **ADM**, o botão **Acesso** e **Sair**. A sessão dura 8 horas.
+- A senha de ADM é o Secret **`PORTAL_PASSWORD`** do Worker (mínimo de 12 caracteres). Se ele não existir, o portal fica só em consulta e a faixa azul avisa "A senha de ADM ainda não foi cadastrada".
+- Analista (`PORTAL_ANALYST_PASSWORD`, opcional) continua escrevendo as observações da Ana e os formulários.
+
+## Acesso (só ADM)
+
+- **Aberto para consulta:** qualquer pessoa com o endereço vê tudo, sem alterar (o pedido desta versão).
+- **Fechado (recomendado para dados sensíveis):** o endereço sozinho pede senha. Quem só consulta entra pelo **link de consulta** (fica 30 dias naquele navegador).
+- **Gerar link novo** desliga o link anterior e todas as sessões abertas por ele. **Encerrar as outras sessões** derruba todo mundo menos você.
+
+## Segurança
+
+- Corrigido: o formulário de entrada mandava `Origin: null` (política `no-referrer`) e o servidor recusava a senha certa com "Origem inválida".
+- Cabeçalhos em todas as respostas: CSP (sem script de fora nem `eval`), HSTS, `X-Frame-Options: DENY`, `nosniff`, `Referrer-Policy`, `Permissions-Policy`, COOP/CORP e `noindex`.
+- Proxy genérico `/api/sheets` (não era usado pela tela) removido.
+- Freio contra robôs na consulta sem senha (600 pedidos por minuto por endereço) e limite de tentativas de senha e de link.
+- Redirecionamento depois do login só para páginas do próprio portal.
+
+## Publicação
+
+1. Cloudflare → **Workers & Pages → controlofproduction → Settings → Variables and Secrets**: confira se existe o Secret **`PORTAL_PASSWORD`** (mínimo de 12 caracteres). Se não existir, **Add → Secret**.
+2. Envie o pacote ao GitHub como sempre; o build publica sozinho.
+3. Confira **MB51-73** no rodapé. Sem entrar, o topo mostra **CONSULTA**. Clique em **Entrar como ADM** e use a senha.
+
+---
+
 # MB51-72 — Enviar o GRÁFICO por e-mail para o Warehouse
 
 Na aba **GRÁFICO**, o botão **Enviar por e-mail** (ao lado do número de OPs) monta um e-mail formal para o Warehouse com:
